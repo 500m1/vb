@@ -1,0 +1,204 @@
+
+Sub SplitDataByColumnJ()
+    Dim wsSource As Worksheet
+    Set wsSource = ThisWorkbook.Sheets("MainData")
+    
+    Dim wsLookup As Worksheet
+    Set wsLookup = ThisWorkbook.Sheets("Client Data")
+
+    Dim lastRow As Long
+    lastRow = wsSource.Cells(wsSource.Rows.Count, "J").End(xlUp).Row
+    
+    Dim headers As Range
+    Set headers = wsSource.Range("A1:M1")
+    
+    Dim groups As Variant
+    Dim sheetNames As Variant
+
+    groups = Array( _
+        Array("33", "49", "72", "69", "20", "22", "24", "18", "7X", "11"), _
+        Array("30", "32", "8R"), _
+        Array("8G", "12"), _
+        Array("27", "52"), _
+        Array("28", "25", "7R", "10", "SG", "DA", "PA"), _
+        Array("19", "05", "14", "06", "04", "07"), _
+        Array("7B", "01", "9C", "02", "16", "15") _
+    )
+
+    sheetNames = Array( _
+        "33_49_72_69_20_22_24_18_7X_11", _
+        "30_32_8R", _
+        "8G_12", _
+        "27_52", _
+        "28_25_7R_10_SG_DA_PA", _
+        "19_05_14_06_04_07", _
+        "7B_01_9C_02_16_15" _
+    )
+
+    Dim lookupData As Variant
+    Dim lookupLastRow As Long
+    lookupLastRow = wsLookup.Cells(wsLookup.Rows.Count, "C").End(xlUp).Row
+    lookupData = wsLookup.Range("A2:G" & lookupLastRow).Value
+
+    Dim i As Integer, j As Long
+    Dim wsNew As Worksheet
+    Dim val As String
+
+    Application.ScreenUpdating = False
+
+    For i = 0 To UBound(groups)
+        On Error Resume Next
+        Application.DisplayAlerts = False
+        ThisWorkbook.Sheets(sheetNames(i)).Delete
+        Application.DisplayAlerts = True
+        On Error GoTo 0
+        
+        Set wsNew = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        On Error Resume Next
+        wsNew.Name = sheetNames(i)
+        On Error GoTo 0
+        
+        headers.Copy Destination:=wsNew.Range("A1")
+        wsNew.Cells(1, 14).Value = "Match Office"
+        wsNew.Cells(1, 15).Value = "Match Acct"
+        wsNew.Cells(1, 16).Value = "Status"
+        wsNew.Cells(1, 17).Value = "Client Name"
+        wsNew.Cells(1, 18).Value = "Client Type"
+        
+        With wsNew.Range("U2")
+            .Value = "the sheet with 33 will be 12 PM to 1 PM, the sheet with 30, will be 1:30 PM - 2:30 PM, the sheet with 8 G will be 3 PM - 4 PM, the sheet with 27 will be 4:30 PM - 5:30 PM, the sheet with 28 will be 5 PM - 6 PM, the sheet with 19 will be 6 PM - 7 PM, and the sheet with 7B will be 7PM - 8 PM."
+            .Interior.Color = RGB(255, 255, 0)
+        End With
+
+        Dim destRow As Long
+        destRow = 2
+
+        For j = 2 To lastRow
+            val = Trim(wsSource.Cells(j, 10).Value)
+            Dim k As Long, matchFound As Boolean
+            matchFound = False
+            For k = LBound(groups(i)) To UBound(groups(i))
+                If val = groups(i)(k) Then
+                    matchFound = True
+                    Exit For
+                End If
+            Next k
+
+            If matchFound Then
+                wsNew.Range("A" & destRow & ":M" & destRow).Value = wsSource.Range("A" & j & ":M" & j).Value
+
+                Dim rowD As String, rowE As String
+                rowD = UCase(Trim(wsSource.Cells(j, 4).Value))
+                rowE = UCase(Trim(wsSource.Cells(j, 5).Value))
+
+                Dim l As Long
+                For l = 1 To UBound(lookupData)
+                    Dim lookupC As String, lookupD As String
+                    lookupC = UCase(Trim(lookupData(l, 3)))
+                    lookupD = UCase(Trim(lookupData(l, 4)))
+
+                    Dim isMatch As Boolean
+                    If lookupC <> "" And lookupC <> "-" Then
+                        isMatch = (rowD = lookupC And rowE = lookupD)
+                    Else
+                        isMatch = (rowE = lookupD)
+                    End If
+
+                    If isMatch Then
+                        Dim clientCode As String
+                        clientCode = Trim(CStr(lookupData(l, 1)))
+                        If clientCode = "" Then clientCode = "-"
+
+                        wsNew.Cells(destRow, 14).Value = lookupC
+                        wsNew.Cells(destRow, 15).Value = lookupD
+                        wsNew.Cells(destRow, 16).Value = "Matched"
+                        wsNew.Cells(destRow, 17).Value = clientCode
+                        wsNew.Cells(destRow, 18).Value = lookupData(l, 7)
+                        Exit For
+                    End If
+                Next l
+
+                destRow = destRow + 1
+            End If
+        Next j
+
+        With wsNew.Sort
+            .SortFields.Clear
+            .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1), Order:=xlAscending
+            .SortFields.Add Key:=wsNew.Range("K2:K" & destRow - 1), Order:=xlAscending
+            .SortFields.Add Key:=wsNew.Range("I2:I" & destRow - 1), Order:=xlAscending
+            .SortFields.Add Key:=wsNew.Range("E2:E" & destRow - 1), Order:=xlAscending
+            .SetRange wsNew.Range("A1:R" & destRow - 1)
+            .Header = xlYes
+            .Apply
+        End With
+
+        wsNew.Columns("A:R").AutoFit
+    Next i
+
+    Application.ScreenUpdating = True
+    MsgBox "Data split complete!"
+End Sub
+
+Sub ClearMainDataSheet()
+    Dim sheetNames As Variant
+    sheetNames = Array( _
+        "MainData", _
+        "33_49_72_69_20_22_24_18_7X_11", _
+        "30_32_8R", _
+        "8G_12", _
+        "27_52", _
+        "28_25_7R_10_SG_DA_PA", _
+        "19_05_14_06_04_07", _
+        "7B_01_9C_02_16_15" _
+    )
+
+    Dim i As Integer
+    For i = 0 To UBound(sheetNames)
+        On Error Resume Next
+        Dim ws As Worksheet
+        Set ws = ThisWorkbook.Sheets(sheetNames(i))
+        If Not ws Is Nothing Then
+            Dim lastRow As Long
+            lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            If lastRow > 1 Then ws.Rows("2:" & lastRow).ClearContents
+        End If
+        On Error GoTo 0
+    Next i
+
+    MsgBox "MainData and split sheets cleared!"
+End Sub
+
+Sub AddRunMacroButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    Dim shp As Shape
+    For Each shp In ws.Shapes
+        If shp.Type = msoFormControl And shp.Name = "btnSplitData" Then shp.Delete
+    Next shp
+
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, _
+                             ws.Range("R2:S2").Width, ws.Range("R2:S2").Height + 5)
+    With btn
+        .Caption = "Split Data"
+        .Name = "btnSplitData"
+        .OnAction = "SplitDataByColumnJ"
+    End With
+End Sub
+
+Sub AddClearDataButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    Dim shp As Shape
+    For Each shp In ws.Shapes
+        If shp.Type = msoFormControl And shp.Name = "btnClearMainData" Then shp.Delete
+    Next shp
+
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, _
+                             ws.Range("R4:S4").Width, ws.Range("R4:S4").Height + 5)
+    With btn
+        .Caption = "Clear Main Data"
+        .Name = "btnClearMainData"
+        .OnAction = "ClearMainDataSheet"
+    End With
+End Sub
