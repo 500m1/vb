@@ -1,3 +1,7 @@
+Private Sub Workbook_Open()
+    AddRunMacroButton
+    AddClearDataButton
+End Sub
 
 Sub SplitDataByColumnJ()
     Dim wsSource As Worksheet
@@ -12,21 +16,20 @@ Sub SplitDataByColumnJ()
     Dim headers As Range
     Set headers = wsSource.Range("A1:M1")
     
-    Dim groups As Variant
-    Dim sheetNames As Variant
+    Dim groups As Variant, sheetNames As Variant, timeNotes As Variant
 
     groups = Array( _
-        Array("33", "49", "72", "69", "20", "22", "24", "18", "7X", "11"), _
+        Array("33", "49", "72", "69", "20", "22", "24", "18", "7Z", "11", "17"), _
         Array("30", "32", "8R"), _
         Array("8G", "12"), _
         Array("27", "52"), _
         Array("28", "25", "7R", "10", "SG", "DA", "PA"), _
-        Array("19", "05", "14", "06", "04", "07"), _
-        Array("7B", "01", "9C", "02", "16", "15") _
+        Array("19", "05", "14", "06", "04", "07", "5", "6", "4", "7"), _
+        Array("7B", "01", "9C", "02", "16", "15", "1", "2") _
     )
 
     sheetNames = Array( _
-        "33_49_72_69_20_22_24_18_7X_11", _
+        "33_49_72_69_20_22_24_18_7Z_11", _
         "30_32_8R", _
         "8G_12", _
         "27_52", _
@@ -35,14 +38,22 @@ Sub SplitDataByColumnJ()
         "7B_01_9C_02_16_15" _
     )
 
+    timeNotes = Array( _
+        "12 PM – 1 PM", _
+        "1:30 PM – 2:30 PM", _
+        "3 PM – 4 PM", _
+        "4:30 PM – 5:30 PM", _
+        "5 PM – 6 PM", _
+        "6:30 PM – 7 PM", _
+        "7 PM – 8 PM" _
+    )
+
     Dim lookupData As Variant
     Dim lookupLastRow As Long
     lookupLastRow = wsLookup.Cells(wsLookup.Rows.Count, "C").End(xlUp).Row
     lookupData = wsLookup.Range("A2:G" & lookupLastRow).Value
 
-    Dim i As Integer, j As Long
-    Dim wsNew As Worksheet
-    Dim val As String
+    Dim i As Integer, j As Long, wsNew As Worksheet, val As String
 
     Application.ScreenUpdating = False
 
@@ -54,9 +65,7 @@ Sub SplitDataByColumnJ()
         On Error GoTo 0
         
         Set wsNew = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        On Error Resume Next
         wsNew.Name = sheetNames(i)
-        On Error GoTo 0
         
         headers.Copy Destination:=wsNew.Range("A1")
         wsNew.Cells(1, 14).Value = "Match Office"
@@ -64,14 +73,16 @@ Sub SplitDataByColumnJ()
         wsNew.Cells(1, 16).Value = "Status"
         wsNew.Cells(1, 17).Value = "Client Name"
         wsNew.Cells(1, 18).Value = "Client Type"
-        
-        With wsNew.Range("U2")
-            .Value = "the sheet with 33 will be 12 PM to 1 PM, the sheet with 30, will be 1:30 PM - 2:30 PM, the sheet with 8 G will be 3 PM - 4 PM, the sheet with 27 will be 4:30 PM - 5:30 PM, the sheet with 28 will be 5 PM - 6 PM, the sheet with 19 will be 6 PM - 7 PM, and the sheet with 7B will be 7PM - 8 PM."
-            .Interior.Color = RGB(255, 255, 0)
-        End With
 
-        Dim destRow As Long
-        destRow = 2
+        With wsNew.Range("U2")
+            .Value = "Time Slot: " & timeNotes(i)
+            .Interior.Color = RGB(255, 255, 0)
+            .Font.Bold = True
+            .Font.Size = 11
+        End With
+        wsNew.Columns("U").AutoFit
+
+        Dim destRow As Long: destRow = 2
 
         For j = 2 To lastRow
             val = Trim(wsSource.Cells(j, 10).Value)
@@ -122,6 +133,7 @@ Sub SplitDataByColumnJ()
             End If
         Next j
 
+        ' Sort
         With wsNew.Sort
             .SortFields.Clear
             .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1), Order:=xlAscending
@@ -137,21 +149,13 @@ Sub SplitDataByColumnJ()
     Next i
 
     Application.ScreenUpdating = True
-    MsgBox "Data split complete!"
+    MsgBox "Data split and labeled successfully!"
 End Sub
 
 Sub ClearMainDataSheet()
     Dim sheetNames As Variant
-    sheetNames = Array( _
-        "MainData", _
-        "33_49_72_69_20_22_24_18_7X_11", _
-        "30_32_8R", _
-        "8G_12", _
-        "27_52", _
-        "28_25_7R_10_SG_DA_PA", _
-        "19_05_14_06_04_07", _
-        "7B_01_9C_02_16_15" _
-    )
+    sheetNames = Array("MainData", "33_49_72_69_20_22_24_18_7Z_11", "30_32_8R", "8G_12", _
+        "27_52", "28_25_7R_10_SG_DA_PA", "19_05_14_06_04_07", "7B_01_9C_02_16_15")
 
     Dim i As Integer
     For i = 0 To UBound(sheetNames)
@@ -166,7 +170,7 @@ Sub ClearMainDataSheet()
         On Error GoTo 0
     Next i
 
-    MsgBox "MainData and split sheets cleared!"
+    MsgBox "All relevant sheets cleared!"
 End Sub
 
 Sub AddRunMacroButton()
@@ -202,3 +206,4 @@ Sub AddClearDataButton()
         .OnAction = "ClearMainDataSheet"
     End With
 End Sub
+
