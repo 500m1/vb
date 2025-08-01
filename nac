@@ -109,8 +109,7 @@ Sub SplitDataByColumnJ()
 
             If matchFound Then
                 wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
-                wsNew.Cells(destRow, 12).Value = "" ' Blank column L
-                wsNew.Cells(destRow, 13).Value = "" ' Blank column M
+                wsNew.Cells(destRow, 12).Value = "" ' Single blank column L
 
                 Dim rowD As String, rowE As String
                 rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
@@ -162,7 +161,6 @@ Sub SplitDataByColumnJ()
             End If
         Next j
 
-        ' Date check for column D
         Dim todayVal As String
         todayVal = Format(Date, "yyyymmdd")
 
@@ -205,20 +203,20 @@ Sub ClearMainDataSheet()
         Dim ws As Worksheet
         Set ws = ThisWorkbook.Sheets(sheetNames(i))
         If Not ws Is Nothing Then
-            Application.DisplayAlerts = False
             If ws.Name <> "MainData" Then
+                Application.DisplayAlerts = False
                 ws.Delete
+                Application.DisplayAlerts = True
             Else
                 Dim lastRow As Long
-                lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+                lastRow = ws.Cells(ws.Rows.Count, "C").End(xlUp).Row
                 If lastRow > 1 Then ws.Rows("2:" & lastRow).ClearContents
             End If
-            Application.DisplayAlerts = True
         End If
         On Error GoTo 0
     Next i
 
-    MsgBox "Split sheets removed and MainData cleared!"
+    MsgBox "All relevant sheets cleared!"
 End Sub
 
 Sub AddRunMacroButton()
