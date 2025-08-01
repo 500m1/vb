@@ -239,7 +239,7 @@ Sub EmailRemainingByClient()
             Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
             Dim i As Long
             For i = 2 To lastRow
-                If Trim(ws.Cells(i, 12).Value) = "Yes" Then
+                If LCase(Trim(ws.Cells(i, 12).Value)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Value)) = "y" Then
                     Dim clientKey As String: clientKey = ws.Cells(i, 16).Value
                     If clientKey <> "" Then
                         If Not clientRows.exists(clientKey) Then
