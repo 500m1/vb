@@ -22,7 +22,7 @@ Sub SplitDataByColumnJ()
     lastRow = wsSource.Cells(wsSource.Rows.Count, "K").End(xlUp).Row
     
     Dim headers As Range
-    Set headers = wsSource.Range("A1:M1")
+    Set headers = wsSource.Range("C1:M1")
     
     Dim groups As Variant, sheetNames As Variant, timeNotes As Variant
 
@@ -76,6 +76,8 @@ Sub SplitDataByColumnJ()
         wsNew.Name = sheetNames(i)
         
         headers.Copy Destination:=wsNew.Range("A1")
+        wsNew.Range("F1:G1").Font.Bold = True
+        
         wsNew.Cells(1, 14).Value = "Match Office"
         wsNew.Cells(1, 15).Value = "Match Acct"
         wsNew.Cells(1, 16).Value = "Status"
@@ -90,6 +92,7 @@ Sub SplitDataByColumnJ()
             .Value = "Time Slot: " & timeNotes(i)
             .Font.Bold = True
             .Font.Size = 11
+            .Interior.Color = RGB(255, 255, 0)
         End With
         wsNew.Columns("V").AutoFit
 
@@ -107,7 +110,7 @@ Sub SplitDataByColumnJ()
             Next k
 
             If matchFound Then
-                wsNew.Range("A" & destRow & ":M" & destRow).Value = wsSource.Range("A" & j & ":M" & j).Value
+                wsNew.Range("A" & destRow & ":L" & destRow).Value = wsSource.Range("C" & j & ":N" & j).Value
 
                 Dim rowD As String, rowE As String
                 rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
