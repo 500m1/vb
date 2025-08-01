@@ -1,30 +1,24 @@
-
 '===================================
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
-'Version: v2.2
-'Description: Generates SPLIT APS Positions for Markets TM Closing/Allocating + Creates Emails
+'Version: v2.3
+'Description: Generates SPLIT APS Positions + Email by Client
 '===================================
 
 Private Sub Workbook_Open()
     AddRunMacroButton
     AddClearDataButton
+    AddEmailButton
 End Sub
 
 Sub SplitDataByColumnJ()
-    Dim wsSource As Worksheet
-    Set wsSource = ThisWorkbook.Sheets("MainData")
+    Dim wsSource As Worksheet: Set wsSource = ThisWorkbook.Sheets("MainData")
+    Dim wsLookup As Worksheet: Set wsLookup = ThisWorkbook.Sheets("Client Data")
 
-    Dim wsLookup As Worksheet
-    Set wsLookup = ThisWorkbook.Sheets("Client Data")
+    Dim lastRow As Long: lastRow = wsSource.Cells(wsSource.Rows.Count, "K").End(xlUp).Row
+    Dim headers As Range: Set headers = wsSource.Range("C1:M1")
 
-    Dim lastRow As Long
-    lastRow = wsSource.Cells(wsSource.Rows.Count, "K").End(xlUp).Row
-
-    Dim headers As Range
-    Set headers = wsSource.Range("C1:M1")
-
-    Dim groups As Variant, sheetNames As Variant, timeNotes As Variant
+    Dim groups, sheetNames, timeNotes
     groups = Array( _
         Array("33", "49", "72", "69", "20", "22", "24", "18", "7Z", "11", "17"), _
         Array("30", "32", "8R"), _
@@ -46,11 +40,10 @@ Sub SplitDataByColumnJ()
     )
 
     Dim lookupData As Variant
-    Dim lookupLastRow As Long
-    lookupLastRow = wsLookup.Cells(wsLookup.Rows.Count, "C").End(xlUp).Row
+    Dim lookupLastRow As Long: lookupLastRow = wsLookup.Cells(wsLookup.Rows.Count, "C").End(xlUp).Row
     lookupData = wsLookup.Range("A2:J" & lookupLastRow).Value
 
-    Dim i As Integer, j As Long, wsNew As Worksheet, val As String
+    Dim i As Long, j As Long, wsNew As Worksheet, val As String
     Application.ScreenUpdating = False
 
     For i = 0 To UBound(groups)
@@ -65,7 +58,7 @@ Sub SplitDataByColumnJ()
 
         headers.Copy Destination:=wsNew.Range("A1")
         wsNew.Range("A1:K1").Font.Bold = True
-        wsNew.Cells(1, 12).Value = "Email?" ' Column L - Spacer
+        wsNew.Cells(1, 12).Value = "Email?"
         wsNew.Cells(1, 13).Value = "Match Office"
         wsNew.Cells(1, 14).Value = "Match Acct"
         wsNew.Cells(1, 15).Value = "Status"
@@ -82,89 +75,85 @@ Sub SplitDataByColumnJ()
             .Font.Size = 11
             .Interior.Color = RGB(255, 255, 0)
         End With
-        wsNew.Columns("V").AutoFit
 
         Dim destRow As Long: destRow = 2
 
         For j = 2 To lastRow
             val = Trim(wsSource.Cells(j, 10).Value)
-            Dim k As Long, matchFound As Boolean
-            matchFound = False
-            For k = LBound(groups(i)) To UBound(groups(i))
-                If val = groups(i)(k) Then
-                    matchFound = True
-                    Exit For
-                End If
-            Next k
+            If Not IsError(val) Then
+                If Not IsEmpty(val) Then
+                    Dim k As Long, matchFound As Boolean: matchFound = False
+                    For k = LBound(groups(i)) To UBound(groups(i))
+                        If val = groups(i)(k) Then matchFound = True: Exit For
+                    Next k
 
-            If matchFound Then
-                wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
-                wsNew.Cells(destRow, 12).Value = "Yes" ' Column L - Email?
+                    If matchFound Then
+                        wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
+                        wsNew.Cells(destRow, 12).Value = "Yes"
 
-                Dim rowD As String, rowE As String
-                rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
-                rowE = UCase(Trim(CStr(wsSource.Cells(j, 5).Value)))
+                        Dim rowD As String, rowE As String
+                        rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
+                        rowE = UCase(Trim(CStr(wsSource.Cells(j, 5).Value)))
 
-                Dim l As Long, matched As Boolean: matched = False
-                For l = 1 To UBound(lookupData)
-                    Dim lookupC As String, lookupD As String
-                    lookupC = UCase(Trim(CStr(lookupData(l, 3))))
-                    lookupD = UCase(Trim(CStr(lookupData(l, 4))))
+                        Dim l As Long, matched As Boolean: matched = False
+                        For l = 1 To UBound(lookupData)
+                            Dim lookupC As String, lookupD As String
+                            lookupC = UCase(Trim(CStr(lookupData(l, 3))))
+                            lookupD = UCase(Trim(CStr(lookupData(l, 4))))
 
-                    If lookupC <> "" And lookupC <> "-" Then
-                        If rowD = lookupC And rowE = lookupD Then matched = True
-                    ElseIf rowE = lookupD Then
-                        matched = True
+                            If lookupC <> "" And lookupC <> "-" Then
+                                If rowD = lookupC And rowE = lookupD Then matched = True
+                            ElseIf rowE = lookupD Then
+                                matched = True
+                            End If
+
+                            If matched Then
+                                wsNew.Cells(destRow, 13).Value = lookupC
+                                wsNew.Cells(destRow, 14).Value = lookupD
+                                wsNew.Cells(destRow, 15).Value = "Matched"
+                                wsNew.Cells(destRow, 16).Value = lookupData(l, 1)
+                                wsNew.Cells(destRow, 17).Value = lookupData(l, 7)
+                                wsNew.Cells(destRow, 18).Value = lookupData(l, 8)
+                                wsNew.Cells(destRow, 19).Value = lookupData(l, 9)
+                                wsNew.Cells(destRow, 20).Value = lookupData(l, 10)
+                                wsNew.Cells(destRow, 21).Value = "Matched"
+                                Exit For
+                            End If
+                        Next l
+
+                        If Not matched Then
+                            wsNew.Cells(destRow, 15).Value = "Unmatched"
+                            wsNew.Cells(destRow, 21).Value = "Unmatched"
+                        End If
+
+                        If wsNew.Cells(destRow, 15).Value = "Unmatched" Then
+                            wsNew.Cells(destRow, 15).Interior.Color = RGB(255, 192, 0)
+                        End If
+                        If wsNew.Cells(destRow, 21).Value = "Unmatched" Then
+                            wsNew.Cells(destRow, 21).Interior.Color = RGB(255, 192, 0)
+                        End If
+
+                        destRow = destRow + 1
                     End If
-
-                    If matched Then
-                        wsNew.Cells(destRow, 13).Value = lookupC
-                        wsNew.Cells(destRow, 14).Value = lookupD
-                        wsNew.Cells(destRow, 15).Value = "Matched"
-                        wsNew.Cells(destRow, 16).Value = lookupData(l, 1)
-                        wsNew.Cells(destRow, 17).Value = lookupData(l, 7)
-                        wsNew.Cells(destRow, 18).Value = lookupData(l, 8)
-                        wsNew.Cells(destRow, 19).Value = lookupData(l, 9)
-                        wsNew.Cells(destRow, 20).Value = lookupData(l, 10)
-                        wsNew.Cells(destRow, 21).Value = "Matched"
-                        Exit For
-                    End If
-                Next l
-
-                If Not matched Then
-                    wsNew.Cells(destRow, 15).Value = "Unmatched"
-                    wsNew.Cells(destRow, 21).Value = "Unmatched"
                 End If
-
-                If wsNew.Cells(destRow, 15).Value = "Unmatched" Then
-                    wsNew.Cells(destRow, 15).Interior.Color = RGB(255, 192, 0)
-                End If
-                If wsNew.Cells(destRow, 21).Value = "Unmatched" Then
-                    wsNew.Cells(destRow, 21).Interior.Color = RGB(255, 192, 0)
-                End If
-
-                destRow = destRow + 1
             End If
         Next j
 
-        ' Highlight Column D (now Date) if not today
-        Dim todayVal As String
-        todayVal = Format(Date, "yyyymmdd")
+        ' Highlight Date Mismatch
+        Dim todayVal As String: todayVal = Format(Date, "yyyymmdd")
         Dim r As Long
         For r = 2 To destRow - 1
-            Dim cellDate As String
-            cellDate = Trim(CStr(wsNew.Cells(r, 4).Value))
-            If cellDate <> "" And cellDate <> todayVal Then
+            If Trim(CStr(wsNew.Cells(r, 4).Value)) <> todayVal Then
                 wsNew.Cells(r, 4).Interior.Color = RGB(255, 0, 0)
             End If
         Next r
 
         With wsNew.Sort
             .SortFields.Clear
-            .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1), Order:=xlAscending
-            .SortFields.Add Key:=wsNew.Range("K2:K" & destRow - 1), Order:=xlAscending
-            .SortFields.Add Key:=wsNew.Range("I2:I" & destRow - 1), Order:=xlAscending
-            .SortFields.Add Key:=wsNew.Range("E2:E" & destRow - 1), Order:=xlAscending
+            .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("K2:K" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("I2:I" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("E2:E" & destRow - 1)
             .SetRange wsNew.Range("A1:V" & destRow - 1)
             .Header = xlYes
             .Apply
@@ -186,12 +175,10 @@ Sub ClearMainDataSheet()
     Dim i As Integer
     For i = 0 To UBound(sheetNames)
         On Error Resume Next
-        Dim ws As Worksheet
-        Set ws = ThisWorkbook.Sheets(sheetNames(i))
+        Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets(sheetNames(i))
         If Not ws Is Nothing Then
             If ws.Name = "MainData" Then
-                Dim lastRow As Long
-                lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+                Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
                 If lastRow > 1 Then ws.Rows("2:" & lastRow).ClearContents
             Else
                 Application.DisplayAlerts = False
@@ -201,20 +188,14 @@ Sub ClearMainDataSheet()
         End If
         On Error GoTo 0
     Next i
-
     MsgBox "MainData cleared and split sheets removed!"
 End Sub
 
 Sub AddRunMacroButton()
     Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
-    Dim shp As Shape
-    For Each shp In ws.Shapes
-        If shp.Type = msoFormControl And shp.Name = "btnSplitData" Then shp.Delete
-    Next shp
-
+    DeleteButtonIfExists ws, "btnSplitData"
     Dim btn As Button
-    Set btn = ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, _
-                             ws.Range("R2:T2").Width, ws.Range("R2:T2").Height + 5)
+    Set btn = ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, ws.Range("R2:T2").Width, ws.Range("R2:T2").Height + 5)
     With btn
         .Caption = "Split Data"
         .Name = "btnSplitData"
@@ -224,14 +205,9 @@ End Sub
 
 Sub AddClearDataButton()
     Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
-    Dim shp As Shape
-    For Each shp In ws.Shapes
-        If shp.Type = msoFormControl And shp.Name = "btnClearMainData" Then shp.Delete
-    Next shp
-
+    DeleteButtonIfExists ws, "btnClearMainData"
     Dim btn As Button
-    Set btn = ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, _
-                             ws.Range("R4:T4").Width, ws.Range("R4:T4").Height + 5)
+    Set btn = ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, ws.Range("R4:T4").Width, ws.Range("R4:T4").Height + 5)
     With btn
         .Caption = "Clear Main Data"
         .Name = "btnClearMainData"
@@ -239,4 +215,86 @@ Sub AddClearDataButton()
     End With
 End Sub
 
+Sub AddEmailButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    DeleteButtonIfExists ws, "btnEmailRemaining"
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R6").Left, ws.Range("R6").Top, ws.Range("R6:T6").Width, ws.Range("R6:T6").Height + 5)
+    With btn
+        .Caption = "Email Remaining by Client"
+        .Name = "btnEmailRemaining"
+        .OnAction = "EmailRemainingByClient"
+    End With
+End Sub
 
+Sub DeleteButtonIfExists(ws As Worksheet, btnName As String)
+    Dim shp As Shape
+    For Each shp In ws.Shapes
+        If shp.Type = msoFormControl And shp.Name = btnName Then shp.Delete
+    Next shp
+End Sub
+
+Sub EmailRemainingByClient()
+    Dim ws As Worksheet, clientDict As Object
+    Set clientDict = CreateObject("Scripting.Dictionary")
+
+    For Each ws In ThisWorkbook.Sheets
+        If ws.Name <> "MainData" And ws.Name <> "Client Data" Then
+            Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            Dim r As Long
+            For r = 2 To lastRow
+                If LCase(ws.Cells(r, 12).Value) = "yes" Then
+                    Dim clientName As String: clientName = ws.Cells(r, 16).Value
+                    If clientName <> "" Then
+                        If Not clientDict.exists(clientName) Then
+                            clientDict.Add clientName, New Collection
+                        End If
+                        clientDict(clientName).Add ws.Name & "!" & r
+                    End If
+                End If
+            Next r
+        End If
+    Next ws
+
+    Dim client As Variant
+    For Each client In clientDict.keys
+        Dim outlookApp As Object, outlookMail As Object
+        Set outlookApp = CreateObject("Outlook.Application")
+        Set outlookMail = outlookApp.CreateItem(0)
+
+        Dim htmlBody As String
+        htmlBody = "<p>Hello,<br><br>We have a discrepancy for the below trades. We are missing allocations, quantity and/or a price break. Please provide full allocations and advise.<br><br>"
+
+        htmlBody = htmlBody & "<table border='1' cellspacing='0' cellpadding='4'><tr>"
+        Dim headers As Range: Set headers = ThisWorkbook.Sheets("MainData").Range("C1:M1")
+        Dim h As Range
+        For Each h In headers
+            htmlBody = htmlBody & "<th>" & h.Value & "</th>"
+        Next h
+        htmlBody = htmlBody & "</tr>"
+
+        Dim ref As Variant
+        For Each ref In clientDict(client)
+            Dim parts: parts = Split(ref, "!")
+            Dim wsName As String: wsName = parts(0)
+            Dim rowNum As Long: rowNum = CLng(parts(1))
+            Dim rVals As Variant: rVals = ThisWorkbook.Sheets(wsName).Range("A" & rowNum & ":K" & rowNum).Value
+            htmlBody = htmlBody & "<tr>"
+            Dim c As Integer
+            For c = 1 To 11
+                htmlBody = htmlBody & "<td>" & rVals(1, c) & "</td>"
+            Next c
+            htmlBody = htmlBody & "</tr>"
+        Next ref
+
+        htmlBody = htmlBody & "</table><br>Thank you.</p>"
+
+        With outlookMail
+            .To = "" ' Fill if needed
+            '.CC = "" ' Optional CC
+            .Subject = client & " | Missing Allocations | Barclays | " & Format(Date, "mm/dd/yyyy")
+            .HTMLBody = htmlBody
+            .Display
+        End With
+    Next client
+End Sub
