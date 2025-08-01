@@ -1,3 +1,4 @@
+
 '===================================
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
@@ -29,14 +30,14 @@ Sub SplitDataByColumnJ()
         Array("30", "32", "8R"), _
         Array("8G", "12"), _
         Array("27", "52"), _
-        Array("28", "25", "7R", "10", "SG", "DA", "PA"), _
+        Array("28", "25", "7R", "10", "13", "SG", "DA", "PA"), _
         Array("19", "05", "14", "06", "04", "07", "5", "6", "4", "7"), _
         Array("7B", "01", "9C", "02", "16", "15", "1", "2") _
     )
 
     sheetNames = Array( _
         "33_49_72_69_20_22_24_18_7Z_11", "30_32_8R", "8G_12", "27_52", _
-        "28_25_7R_10_SG_DA_PA", "19_05_14_06_04_07", "7B_01_9C_02_16_15" _
+        "28_25_7R_10_13_SG_DA_PA", "19_05_14_06_04_07", "7B_01_9C_02_16_15" _
     )
 
     timeNotes = Array( _
@@ -180,7 +181,7 @@ End Sub
 Sub ClearMainDataSheet()
     Dim sheetNames As Variant
     sheetNames = Array("MainData", "33_49_72_69_20_22_24_18_7Z_11", "30_32_8R", "8G_12", _
-        "27_52", "28_25_7R_10_SG_DA_PA", "19_05_14_06_04_07", "7B_01_9C_02_16_15")
+        "27_52", "28_25_7R_10_13_SG_DA_PA", "19_05_14_06_04_07", "7B_01_9C_02_16_15")
 
     Dim i As Integer
     For i = 0 To UBound(sheetNames)
@@ -237,3 +238,5 @@ Sub AddClearDataButton()
         .OnAction = "ClearMainDataSheet"
     End With
 End Sub
+
+
