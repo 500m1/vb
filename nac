@@ -1,9 +1,8 @@
 '===================================
 'Macro Name: Trade APS Split Generator
-'Peter Riad 2025
-'Version: v2.1
-'Description: Generates SPLIT APS Positions for Markets TM Closing/Allocating
-'Supports query' APSPOSTNS
+'Author: Peter Riad 2025
+'Version: v2.2
+'Description: Generates SPLIT APS Positions with full client validation
 '===================================
 
 Private Sub Workbook_Open()
@@ -20,10 +19,10 @@ Sub SplitDataByColumnJ()
 
     Dim lastRow As Long
     lastRow = wsSource.Cells(wsSource.Rows.Count, "K").End(xlUp).Row
-    
+
     Dim headers As Range
     Set headers = wsSource.Range("A1:M1")
-    
+
     Dim groups As Variant, sheetNames As Variant, timeNotes As Variant
 
     groups = Array( _
@@ -71,10 +70,10 @@ Sub SplitDataByColumnJ()
         ThisWorkbook.Sheets(sheetNames(i)).Delete
         Application.DisplayAlerts = True
         On Error GoTo 0
-        
+
         Set wsNew = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
         wsNew.Name = sheetNames(i)
-        
+
         headers.Copy Destination:=wsNew.Range("A1")
         wsNew.Cells(1, 14).Value = "Match Office"
         wsNew.Cells(1, 15).Value = "Match Acct"
@@ -84,14 +83,16 @@ Sub SplitDataByColumnJ()
         wsNew.Cells(1, 19).Value = "Behavior"
         wsNew.Cells(1, 20).Value = "Notes"
         wsNew.Cells(1, 21).Value = "Notes 2"
+        wsNew.Cells(1, 22).Value = "Behavior Match"
+        wsNew.Range("V1").Interior.Color = RGB(255, 255, 0)
 
-        With wsNew.Range("V1")
+        With wsNew.Range("W1")
             .Value = "Time Slot: " & timeNotes(i)
             .Interior.Color = RGB(255, 255, 0)
             .Font.Bold = True
             .Font.Size = 11
         End With
-        wsNew.Columns("V").AutoFit
+        wsNew.Columns("A:W").AutoFit
 
         Dim destRow As Long: destRow = 2
 
@@ -113,20 +114,19 @@ Sub SplitDataByColumnJ()
                 rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
                 rowE = UCase(Trim(CStr(wsSource.Cells(j, 5).Value)))
 
-                Dim l As Long
+                Dim l As Long, matched As Boolean: matched = False
                 For l = 1 To UBound(lookupData)
                     Dim lookupC As String, lookupD As String
                     lookupC = UCase(Trim(CStr(lookupData(l, 3))))
                     lookupD = UCase(Trim(CStr(lookupData(l, 4))))
 
-                    Dim isMatch As Boolean
                     If lookupC <> "" And lookupC <> "-" Then
-                        isMatch = (rowD = lookupC And rowE = lookupD)
+                        If rowD = lookupC And rowE = lookupD Then matched = True
                     Else
-                        isMatch = (rowE = lookupD)
+                        If rowE = lookupD Then matched = True
                     End If
 
-                    If isMatch Then
+                    If matched Then
                         Dim clientCode As String
                         clientCode = Trim(CStr(lookupData(l, 1)))
                         If clientCode = "" Then clientCode = "-"
@@ -136,25 +136,35 @@ Sub SplitDataByColumnJ()
                         wsNew.Cells(destRow, 16).Value = "Matched"
                         wsNew.Cells(destRow, 17).Value = clientCode
                         wsNew.Cells(destRow, 18).Value = lookupData(l, 7)
-                        wsNew.Cells(destRow, 19).Value = lookupData(l, 8)  ' Behavior (H)
-                        wsNew.Cells(destRow, 20).Value = lookupData(l, 9)  ' Notes (I)
-                        wsNew.Cells(destRow, 21).Value = lookupData(l, 10)  ' Notes 2(K)
+                        wsNew.Cells(destRow, 19).Value = lookupData(l, 8)
+                        wsNew.Cells(destRow, 20).Value = lookupData(l, 9)
+                        wsNew.Cells(destRow, 21).Value = lookupData(l, 10)
+                        wsNew.Cells(destRow, 22).Value = "Matched"
                         Exit For
                     End If
                 Next l
+
+                If Not matched Then
+                    wsNew.Cells(destRow, 16).Value = "Unmatched"
+                    wsNew.Cells(destRow, 22).Value = "Unmatched"
+                End If
+
+                If wsNew.Cells(destRow, 16).Value = "Unmatched" Then
+                    wsNew.Cells(destRow, 16).Interior.Color = RGB(255, 192, 0)
+                End If
+                If wsNew.Cells(destRow, 22).Value = "Unmatched" Then
+                    wsNew.Cells(destRow, 22).Interior.Color = RGB(255, 192, 0)
+                End If
 
                 destRow = destRow + 1
             End If
         Next j
 
-        ' Highlight Column F where the date does not match today
-        Dim todayVal As String
-        todayVal = Format(Date, "yyyymmdd")
-
+        ' Highlight invalid dates
+        Dim todayVal As String: todayVal = Format(Date, "yyyymmdd")
         Dim checkRow As Long
         For checkRow = 2 To destRow - 1
-            Dim cellDate As String
-            cellDate = Trim(CStr(wsNew.Cells(checkRow, 6).Value))
+            Dim cellDate As String: cellDate = Trim(CStr(wsNew.Cells(checkRow, 6).Value))
             If cellDate <> "" And cellDate <> todayVal Then
                 wsNew.Cells(checkRow, 6).Interior.Color = RGB(255, 0, 0)
             End If
@@ -167,16 +177,16 @@ Sub SplitDataByColumnJ()
             .SortFields.Add Key:=wsNew.Range("K2:K" & destRow - 1), Order:=xlAscending
             .SortFields.Add Key:=wsNew.Range("I2:I" & destRow - 1), Order:=xlAscending
             .SortFields.Add Key:=wsNew.Range("E2:E" & destRow - 1), Order:=xlAscending
-            .SetRange wsNew.Range("A1:R" & destRow - 1)
+            .SetRange wsNew.Range("A1:W" & destRow - 1)
             .Header = xlYes
             .Apply
         End With
 
-        wsNew.Columns("A:U").AutoFit
+        wsNew.Columns("A:W").AutoFit
     Next i
 
     Application.ScreenUpdating = True
-    MsgBox "Data split, labeled, and validated!"
+    MsgBox "Data split, validated, and flagged!"
 End Sub
 
 Sub ClearMainDataSheet()
@@ -187,11 +197,9 @@ Sub ClearMainDataSheet()
     Dim i As Integer
     For i = 0 To UBound(sheetNames)
         On Error Resume Next
-        Dim ws As Worksheet
-        Set ws = ThisWorkbook.Sheets(sheetNames(i))
+        Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets(sheetNames(i))
         If Not ws Is Nothing Then
-            Dim lastRow As Long
-            lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
             If lastRow > 1 Then ws.Rows("2:" & lastRow).ClearContents
         End If
         On Error GoTo 0
@@ -209,7 +217,7 @@ Sub AddRunMacroButton()
 
     Dim btn As Button
     Set btn = ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, _
-                             ws.Range("R2:S2").Width, ws.Range("R2:S2").Height + 5)
+                             ws.Range("R2:T2").Width, ws.Range("R2:T2").Height + 5)
     With btn
         .Caption = "Split Data"
         .Name = "btnSplitData"
@@ -226,12 +234,10 @@ Sub AddClearDataButton()
 
     Dim btn As Button
     Set btn = ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, _
-                             ws.Range("R4:S4").Width, ws.Range("R4:S4").Height + 5)
+                             ws.Range("R4:T4").Width, ws.Range("R4:T4").Height + 5)
     With btn
         .Caption = "Clear Main Data"
         .Name = "btnClearMainData"
         .OnAction = "ClearMainDataSheet"
     End With
 End Sub
-
-
