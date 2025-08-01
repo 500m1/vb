@@ -2,7 +2,7 @@
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
 'Version: v2.2
-'Description: Splits APS Positions, formats, adds logic for email prep  
+'Description: Generates SPLIT APS Positions for Markets TM Closing/Allocating + Creates Emails
 '===================================
 
 Private Sub Workbook_Open()
