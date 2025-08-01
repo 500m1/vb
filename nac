@@ -1,9 +1,11 @@
 '===================================
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
-'Version: v2.3
-'Description: Full Macro with Split Data + Clear + UI Buttons
+'Version: v2.1
+'Description: Generates SPLIT APS Positions for Markets TM Closing/Allocating
+'Supports query: APSPOSTNS
 '===================================
+
 Private Sub Workbook_Open()
     AddRunMacroButton
     AddClearDataButton
@@ -75,16 +77,16 @@ Sub SplitDataByColumnJ()
         
         headers.Copy Destination:=wsNew.Range("A1")
         wsNew.Range("A1:K1").Font.Bold = True
-        
-        wsNew.Cells(1, 14).Value = "Match Office"
-        wsNew.Cells(1, 15).Value = "Match Acct"
-        wsNew.Cells(1, 16).Value = "Status"
-        wsNew.Cells(1, 17).Value = "Client Name"
-        wsNew.Cells(1, 18).Value = "Client Type"
-        wsNew.Cells(1, 19).Value = "Behavior"
-        wsNew.Cells(1, 20).Value = "Notes"
-        wsNew.Cells(1, 21).Value = "Notes 2"
-        wsNew.Cells(1, 22).Value = "Behavior Match"
+        wsNew.Cells(1, 12).Value = "Spacer"
+        wsNew.Cells(1, 13).Value = "Match Office"
+        wsNew.Cells(1, 14).Value = "Match Acct"
+        wsNew.Cells(1, 15).Value = "Status"
+        wsNew.Cells(1, 16).Value = "Client Name"
+        wsNew.Cells(1, 17).Value = "Client Type"
+        wsNew.Cells(1, 18).Value = "Behavior"
+        wsNew.Cells(1, 19).Value = "Notes"
+        wsNew.Cells(1, 20).Value = "Notes 2"
+        wsNew.Cells(1, 21).Value = "Behavior Match"
 
         With wsNew.Range("W1")
             .Value = "Time Slot: " & timeNotes(i)
@@ -109,7 +111,7 @@ Sub SplitDataByColumnJ()
 
             If matchFound Then
                 wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
-                wsNew.Cells(destRow, 12).Value = "" ' Single blank column L
+                wsNew.Cells(destRow, 12).Value = "" ' Single blank column L ("Spacer")
 
                 Dim rowD As String, rowE As String
                 rowD = UCase(Trim(CStr(wsSource.Cells(j, 4).Value)))
@@ -128,39 +130,37 @@ Sub SplitDataByColumnJ()
                     End If
 
                     If matched Then
-                        Dim clientCode As String
-                        clientCode = Trim(CStr(lookupData(l, 1)))
-                        If clientCode = "" Then clientCode = "-"
-
-                        wsNew.Cells(destRow, 14).Value = lookupC
-                        wsNew.Cells(destRow, 15).Value = lookupD
-                        wsNew.Cells(destRow, 16).Value = "Matched"
-                        wsNew.Cells(destRow, 17).Value = clientCode
-                        wsNew.Cells(destRow, 18).Value = lookupData(l, 7)
-                        wsNew.Cells(destRow, 19).Value = lookupData(l, 8)
-                        wsNew.Cells(destRow, 20).Value = lookupData(l, 9)
-                        wsNew.Cells(destRow, 21).Value = lookupData(l, 10)
-                        wsNew.Cells(destRow, 22).Value = "Matched"
+                        wsNew.Cells(destRow, 13).Value = lookupC
+                        wsNew.Cells(destRow, 14).Value = lookupD
+                        wsNew.Cells(destRow, 15).Value = "Matched"
+                        wsNew.Cells(destRow, 16).Value = Trim(CStr(lookupData(l, 1))) ' Client Name
+                        wsNew.Cells(destRow, 17).Value = lookupData(l, 7)
+                        wsNew.Cells(destRow, 18).Value = lookupData(l, 8)
+                        wsNew.Cells(destRow, 19).Value = lookupData(l, 9)
+                        wsNew.Cells(destRow, 20).Value = lookupData(l, 10)
+                        wsNew.Cells(destRow, 21).Value = "Matched"
                         Exit For
                     End If
                 Next l
 
                 If Not matched Then
-                    wsNew.Cells(destRow, 16).Value = "Unmatched"
-                    wsNew.Cells(destRow, 22).Value = "Unmatched"
+                    wsNew.Cells(destRow, 15).Value = "Unmatched"
+                    wsNew.Cells(destRow, 21).Value = "Unmatched"
                 End If
 
-                If wsNew.Cells(destRow, 16).Value = "Unmatched" Then
-                    wsNew.Cells(destRow, 16).Interior.Color = RGB(255, 192, 0)
+                ' Highlight unmatched
+                If wsNew.Cells(destRow, 15).Value = "Unmatched" Then
+                    wsNew.Cells(destRow, 15).Interior.Color = RGB(255, 192, 0)
                 End If
-                If wsNew.Cells(destRow, 22).Value = "Unmatched" Then
-                    wsNew.Cells(destRow, 22).Interior.Color = RGB(255, 192, 0)
+                If wsNew.Cells(destRow, 21).Value = "Unmatched" Then
+                    wsNew.Cells(destRow, 21).Interior.Color = RGB(255, 192, 0)
                 End If
 
                 destRow = destRow + 1
             End If
         Next j
 
+        ' Highlight bad dates in Column D (date field)
         Dim todayVal As String
         todayVal = Format(Date, "yyyymmdd")
 
@@ -173,6 +173,7 @@ Sub SplitDataByColumnJ()
             End If
         Next checkRow
 
+        ' Sort
         With wsNew.Sort
             .SortFields.Clear
             .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1), Order:=xlAscending
@@ -203,15 +204,8 @@ Sub ClearMainDataSheet()
         Dim ws As Worksheet
         Set ws = ThisWorkbook.Sheets(sheetNames(i))
         If Not ws Is Nothing Then
-            If ws.Name <> "MainData" Then
-                Application.DisplayAlerts = False
-                ws.Delete
-                Application.DisplayAlerts = True
-            Else
-                Dim lastRow As Long
-                lastRow = ws.Cells(ws.Rows.Count, "C").End(xlUp).Row
-                If lastRow > 1 Then ws.Rows("2:" & lastRow).ClearContents
-            End If
+            ws.Cells.ClearContents
+            ws.Range("A1:Z1").Interior.ColorIndex = xlNone
         End If
         On Error GoTo 0
     Next i
