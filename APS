@@ -176,5 +176,6 @@ Sub SplitDataByColumnJ()
     Next i
 
     Application.ScreenUpdating = True
+    ThisWorkbook.Sheets("33_49_72_69_20_22_24_18_7Z_11").Activate
     MsgBox "Data split, labeled, and validated!"
 End Sub
