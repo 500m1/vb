@@ -1,0 +1,144 @@
+'===================================
+'Macro Name: Trade APS Split Generator
+'Peter Riad 2025
+'Version: v3.2
+'Description: Generates SPLIT APS Positions + Creates Emails per Client + Matches EOD Chased
+'===================================
+
+Private Sub Workbook_Open()
+    AddRunMacroButton
+    AddClearDataButton
+    AddEmailButton
+End Sub
+
+Sub AddRunMacroButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    On Error Resume Next: ws.Shapes("btnSplitData").Delete: On Error GoTo 0
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, ws.Range("R2:T2").Width, ws.Range("R2:T2").Height + 5)
+    With btn
+        .Caption = "Split Data"
+        .Name = "btnSplitData"
+        .OnAction = "SplitDataByColumnJ"
+    End With
+End Sub
+
+Sub AddClearDataButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    On Error Resume Next: ws.Shapes("btnClearMainData").Delete: On Error GoTo 0
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, ws.Range("R4:T4").Width, ws.Range("R4:T4").Height + 5)
+    With btn
+        .Caption = "Clear Main Data"
+        .Name = "btnClearMainData"
+        .OnAction = "ClearMainDataSheet"
+    End With
+End Sub
+
+Sub AddEmailButton()
+    Dim ws As Worksheet: Set ws = ThisWorkbook.Sheets("MainData")
+    On Error Resume Next: ws.Shapes("btnEmailRemaining").Delete: On Error GoTo 0
+    Dim btn As Button
+    Set btn = ws.Buttons.Add(ws.Range("R6").Left, ws.Range("R6").Top, ws.Range("R6:T6").Width, ws.Range("R6:T6").Height + 5)
+    With btn
+        .Caption = "Email Remaining by Client"
+        .Name = "btnEmailRemaining"
+        .OnAction = "EmailRemainingByClient"
+    End With
+End Sub
+
+Sub ClearMainDataSheet()
+    Dim ws As Worksheet
+    For Each ws In ThisWorkbook.Sheets
+        If ws.Name <> "MainData" And ws.Name <> "Client Data" And ws.Name <> "EOD Chased" Then
+            Application.DisplayAlerts = False
+            ws.Delete
+            Application.DisplayAlerts = True
+        ElseIf ws.Name = "MainData" Then
+            ws.Rows("2:" & ws.Cells(ws.Rows.Count, "A").End(xlUp).Row).ClearContents
+        End If
+    Next ws
+    MsgBox "MainData cleared and split sheets removed!"
+End Sub
+
+Sub EmailRemainingByClient()
+    Dim ws As Worksheet
+    Dim clientRows As Object: Set clientRows = CreateObject("Scripting.Dictionary")
+    For Each ws In ThisWorkbook.Sheets
+        If ws.Name <> "MainData" And ws.Name <> "Client Data" And ws.Name <> "EOD Chased" Then
+            Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            Dim i As Long
+            For i = 2 To lastRow
+                If LCase(Trim(ws.Cells(i, 12).Value)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Value)) = "y" Then
+                    Dim clientKey As String: clientKey = ws.Cells(i, 16).Value
+                    If clientKey <> "" Then
+                        If Not clientRows.exists(clientKey) Then
+                            Set clientRows(clientKey) = New Collection
+                        End If
+                        clientRows(clientKey).Add ws.Rows(i)
+                    End If
+                End If
+            Next i
+        End If
+    Next ws
+
+    Dim olApp As Object, outMail As Object
+    Set olApp = CreateObject("Outlook.Application")
+
+    Dim client As Variant
+    For Each client In clientRows.keys
+        Set outMail = olApp.CreateItem(0)
+        Dim outMsg As String
+        outMsg = "<b>Missing Allocations:</b><br><br><table border='1' cellpadding='3'><tr>"
+        For i = 1 To 11
+            outMsg = outMsg & "<th>" & clientRows(client)(1).Parent.Cells(1, i).Text & "</th>"
+        Next i
+        outMsg = outMsg & "</tr>"
+        For Each rw In clientRows(client)
+            outMsg = outMsg & "<tr>"
+            For i = 1 To 11
+                outMsg = outMsg & "<td>" & rw.Cells(1, i).Text & "</td>"
+            Next i
+            outMsg = outMsg & "</tr>"
+        Next rw
+        outMsg = outMsg & "</table><br><br>Thank you,<br>"
+
+        With outMail
+            .To = ""
+            .Subject = client & " | Missing Allocations | Barclays | " & Format(Date, "dd-mmm-yyyy")
+            .HTMLBody = outMsg
+            .Display
+        End With
+    Next client
+
+    MsgBox "Emails generated for all clients marked 'Yes'."
+End Sub
+
+' Run this after SplitDataByColumnJ to apply EOD Chased highlighting
+Sub HighlightEODMatches()
+    Dim wsChased As Worksheet
+    On Error Resume Next: Set wsChased = ThisWorkbook.Sheets("EOD Chased"): On Error GoTo 0
+    If wsChased Is Nothing Then Exit Sub
+
+    Dim chasedRange As Range
+    Set chasedRange = wsChased.Range("A2", wsChased.Cells(wsChased.Rows.Count, "A").End(xlUp)).Resize(, 11)
+    If chasedRange Is Nothing Then Exit Sub
+
+    Dim arrChased As Variant: arrChased = chasedRange.Value
+    Dim ws As Worksheet, i As Long, j As Long, matchRow As Range
+
+    For Each ws In ThisWorkbook.Sheets
+        If ws.Name <> "MainData" And ws.Name <> "Client Data" And ws.Name <> "EOD Chased" Then
+            Dim dataLastRow As Long: dataLastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            For i = 2 To dataLastRow
+                For j = 1 To UBound(arrChased, 1)
+                    If Join(Application.Index(ws.Range("A" & i & ":K" & i).Value, 1, 0), "||") = _
+                       Join(Application.Index(arrChased, j, 0), "||") Then
+                        ws.Rows(i).Interior.Color = RGB(200, 200, 200)
+                        Exit For
+                    End If
+                Next j
+            Next i
+        End If
+    Next ws
+End Sub
