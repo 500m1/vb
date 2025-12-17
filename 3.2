@@ -1,7 +1,7 @@
 '===================================
 'Macro Name: Trade APS Split Generator
-'Peter Riad 2025
-'Version: v3.2
+'Author: Peter Riad
+'Version: v3.2 (patched)
 '===================================
 
 Private Sub Workbook_Open()
@@ -10,6 +10,9 @@ Private Sub Workbook_Open()
     AddEmailButton
 End Sub
 
+'========================
+' SPLIT DATA
+'========================
 Sub SplitDataByColumnJ()
 
     Dim wsSource As Worksheet: Set wsSource = Sheets("MainData")
@@ -77,13 +80,11 @@ Sub SplitDataByColumnJ()
 
         wsNew.Cells(1, 12).Value = "Email?"
         wsNew.Cells(1, 13).Resize(1, 9).Value = _
-            Array("Match Office", "Match Acct", "Status", "Client Name", "Client Type", _
-                  "Behavior", "Notes", "Notes 2", "Behavior Match")
+            Array("Match Office", "Match Acct", "Status", "Client Name", "Client Type", "Behavior", "Notes", "Notes 2", "Behavior Match")
 
         With wsNew.Range("V1")
             .Value = "Time Slot: " & timeNotes(i)
             .Font.Bold = True
-            .Font.Size = 11
             .Interior.Color = RGB(255, 255, 0)
         End With
 
@@ -91,19 +92,9 @@ Sub SplitDataByColumnJ()
 
         For j = 2 To lastRow
 
-            Dim val As String: val = Trim(wsSource.Cells(j, 10).Value)
+            If Not IsError(Application.Match(wsSource.Cells(j, 10).Value, groups(i), 0)) Then
 
-            Dim found As Boolean: found = False
-            Dim g As Variant
-            For Each g In groups(i)
-                If val = g Then found = True: Exit For
-            Next g
-
-            If found Then
-                wsNew.Range("A" & destRow & ":K" & destRow).Value = _
-                    wsSource.Range("C" & j & ":M" & j).Value
-
-                wsNew.Cells(destRow, 12).Value = ""
+                wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
 
                 Dim rowD As String: rowD = UCase(Trim(wsSource.Cells(j, 4).Value))
                 Dim rowE As String: rowE = UCase(Trim(wsSource.Cells(j, 5).Value))
@@ -124,9 +115,7 @@ Sub SplitDataByColumnJ()
 
                     If matched Then
                         wsNew.Cells(destRow, 13).Resize(1, 8).Value = _
-                            Array(lookupC, lookupD, "Matched", _
-                                  lookupData(l, 1), lookupData(l, 7), _
-                                  lookupData(l, 8), lookupData(l, 9), lookupData(l, 10))
+                            Array(lookupC, lookupD, "Matched", lookupData(l, 1), lookupData(l, 7), lookupData(l, 8), lookupData(l, 9), lookupData(l, 10))
                         wsNew.Cells(destRow, 21).Value = "Matched"
                         Exit For
                     End If
@@ -143,6 +132,7 @@ Sub SplitDataByColumnJ()
             End If
         Next j
 
+        ' Date validation
         Dim todayVal As String: todayVal = Format(Date, "yyyymmdd")
         For j = 2 To destRow - 1
             If Trim(wsNew.Cells(j, 4).Value) <> todayVal Then
@@ -150,47 +140,105 @@ Sub SplitDataByColumnJ()
             End If
         Next j
 
-        Dim countRows As Long: countRows = destRow - 2
-        Select Case countRows
+        ' Tab coloring
+        Dim cnt As Long: cnt = destRow - 2
+        Select Case cnt
             Case 0: wsNew.Tab.Color = RGB(0, 176, 80)
             Case 1 To 25: wsNew.Tab.Color = RGB(255, 255, 0)
             Case 26 To 40: wsNew.Tab.Color = RGB(255, 192, 0)
             Case Else: wsNew.Tab.Color = RGB(255, 0, 0)
         End Select
 
+        ' EOD Chased highlighting
         If SheetExists("EOD Chased") Then
             Dim wsEOD As Worksheet: Set wsEOD = Sheets("EOD Chased")
+            Dim eodData As Variant
             Dim eodLast As Long: eodLast = wsEOD.Cells(wsEOD.Rows.Count, "A").End(xlUp).Row
-            Dim eodData As Variant: eodData = wsEOD.Range("A2:K" & eodLast).Value
+            If eodLast >= 2 Then
+                eodData = wsEOD.Range("A2:K" & eodLast).Value
 
-            For j = 2 To destRow - 1
-                Dim curRow As Variant: curRow = wsNew.Range("A" & j & ":K" & j).Value
-                Dim r As Variant
-                For Each r In eodData
-                    If Join(curRow, "|") = Join(r, "|") Then
-                        wsNew.Rows(j).Interior.Color = RGB(200, 200, 200)
-                        Exit For
-                    End If
+                Dim r As Long, e As Long
+                For r = 2 To destRow - 1
+                    For e = 1 To UBound(eodData)
+                        If LCase(Join(Application.Transpose(Application.Transpose(wsNew.Range("A" & r & ":K" & r).Value)), "|")) = _
+                           LCase(Join(Application.Transpose(Application.Transpose(Application.Index(eodData, e, 0))), "|")) Then
+                            wsNew.Rows(r).Interior.Color = RGB(200, 200, 200)
+                            Exit For
+                        End If
+                    Next e
                 Next r
-            Next j
+            End If
         End If
 
-        wsNew.Rows(1).AutoFilter
         wsNew.Columns("A:W").AutoFit
-
+        wsNew.Rows(1).AutoFilter
     Next i
 
     wsFirst.Activate
     Application.ScreenUpdating = True
-    MsgBox "Data split, validated, tab-colored, and EOD matched."
+    MsgBox "Split complete."
 
 End Sub
 
-Function SheetExists(sName As String) As Boolean
-    On Error Resume Next
-    SheetExists = Not Sheets(sName) Is Nothing
-End Function
+'========================
+' EMAIL REMAINING
+'========================
+Sub EmailRemainingByClient()
 
+    Dim ws As Worksheet
+    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
+
+    For Each ws In Sheets
+        If ws.Name <> "MainData" And ws.Name <> "Client Data" And ws.Name <> "EOD Chased" Then
+            Dim lr As Long: lr = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+            Dim i As Long
+            For i = 2 To lr
+                If LCase(Trim(ws.Cells(i, 12).Value)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Value)) = "y" Then
+                    Dim key As String: key = ws.Cells(i, 16).Value
+                    If key <> "" Then
+                        If Not dict.exists(key) Then Set dict(key) = New Collection
+                        dict(key).Add ws.Rows(i)
+                    End If
+                End If
+            Next i
+        End If
+    Next ws
+
+    Dim olApp As Object: Set olApp = CreateObject("Outlook.Application")
+    Dim client, mail, rw As Range
+
+    For Each client In dict.keys
+        Set mail = olApp.CreateItem(0)
+        Dim body As String: body = "<table border='1'><tr>"
+        Dim c As Long
+
+        For c = 1 To 11
+            body = body & "<th>" & dict(client)(1).Parent.Cells(1, c).Text & "</th>"
+        Next c
+        body = body & "</tr>"
+
+        For Each rw In dict(client)
+            body = body & "<tr>"
+            For c = 1 To 11
+                body = body & "<td>" & rw.Cells(1, c).Text & "</td>"
+            Next c
+            body = body & "</tr>"
+        Next rw
+
+        body = body & "</table><br><br>Thank you,"
+
+        With mail
+            .Subject = client & " | Missing Allocations | Barclays | " & Format(Date, "dd-mmm-yyyy")
+            .HTMLBody = body
+            .Display
+        End With
+    Next client
+
+End Sub
+
+'========================
+' CLEAR DATA
+'========================
 Sub ClearMainDataSheet()
     Dim ws As Worksheet
     For Each ws In Sheets
@@ -202,88 +250,35 @@ Sub ClearMainDataSheet()
             ws.Rows("2:" & ws.Cells(ws.Rows.Count, "A").End(xlUp).Row).ClearContents
         End If
     Next ws
-    MsgBox "MainData cleared and split sheets removed."
 End Sub
 
+'========================
+' BUTTONS (SAFE)
+'========================
 Sub AddRunMacroButton()
-    Dim ws As Worksheet: Set ws = Sheets("MainData")
-    On Error Resume Next: ws.Shapes("btnSplitData").Delete: On Error GoTo 0
-    With ws.Buttons.Add(ws.Range("R2").Left, ws.Range("R2").Top, ws.Range("R2:T2").Width, ws.Range("R2:T2").Height + 5)
-        .Caption = "Split Data"
-        .Name = "btnSplitData"
-        .OnAction = "SplitDataByColumnJ"
-    End With
+    AddButtonSafe "btnSplitData", "Split Data", "SplitDataByColumnJ", "R2:T2"
 End Sub
 
 Sub AddClearDataButton()
-    Dim ws As Worksheet: Set ws = Sheets("MainData")
-    On Error Resume Next: ws.Shapes("btnClearMainData").Delete: On Error GoTo 0
-    With ws.Buttons.Add(ws.Range("R4").Left, ws.Range("R4").Top, ws.Range("R4:T4").Width, ws.Range("R4:T4").Height + 5)
-        .Caption = "Clear Main Data"
-        .Name = "btnClearMainData"
-        .OnAction = "ClearMainDataSheet"
-    End With
+    AddButtonSafe "btnClearMainData", "Clear Main Data", "ClearMainDataSheet", "R4:T4"
 End Sub
 
 Sub AddEmailButton()
+    AddButtonSafe "btnEmailRemaining", "Email Remaining by Client", "EmailRemainingByClient", "R6:T6"
+End Sub
+
+Sub AddButtonSafe(btnName As String, caption As String, macroName As String, rng As String)
     Dim ws As Worksheet: Set ws = Sheets("MainData")
-    On Error Resume Next: ws.Shapes("btnEmailRemaining").Delete: On Error GoTo 0
-    With ws.Buttons.Add(ws.Range("R6").Left, ws.Range("R6").Top, ws.Range("R6:T6").Width, ws.Range("R6:T6").Height + 5)
-        .Caption = "Email Remaining by Client"
-        .Name = "btnEmailRemaining"
-        .OnAction = "EmailRemainingByClient"
+    On Error Resume Next: ws.Shapes(btnName).Delete: On Error GoTo 0
+    With ws.Buttons.Add(ws.Range(rng).Left, ws.Range(rng).Top, ws.Range(rng).Width, ws.Range(rng).Height + 5)
+        .Name = btnName
+        .Caption = caption
+        .OnAction = macroName
     End With
 End Sub
 
-Sub EmailRemainingByClient()
-    Dim ws As Worksheet
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-
-    For Each ws In Sheets
-        If ws.Name <> "MainData" And ws.Name <> "Client Data" And ws.Name <> "EOD Chased" Then
-            Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
-            Dim i As Long
-            For i = 2 To lastRow
-                If LCase(Trim(ws.Cells(i, 12).Value)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Value)) = "y" Then
-                    Dim c As String: c = ws.Cells(i, 16).Value
-                    If c <> "" Then
-                        If Not dict.exists(c) Then Set dict(c) = New Collection
-                        dict(c).Add ws.Rows(i)
-                    End If
-                End If
-            Next i
-        End If
-    Next ws
-
-    Dim olApp As Object: Set olApp = CreateObject("Outlook.Application")
-    Dim k As Variant
-
-    For Each k In dict.keys
-        Dim mail As Object: Set mail = olApp.CreateItem(0)
-        Dim body As String: body = "<table border=1><tr>"
-
-        Dim i As Long
-        For i = 1 To 11
-            body = body & "<th>" & dict(k)(1).Parent.Cells(1, i).Text & "</th>"
-        Next i
-        body = body & "</tr>"
-
-        Dim rw As Range
-        For Each rw In dict(k)
-            body = body & "<tr>"
-            For i = 1 To 11
-                body = body & "<td>" & rw.Cells(1, i).Text & "</td>"
-            Next i
-            body = body & "</tr>"
-        Next rw
-
-        body = body & "</table><br><br>Thank you,"
-
-        With mail
-            .Subject = k & " | Missing Allocations | Barclays | " & Format(Date, "dd-mmm-yyyy")
-            .HTMLBody = body
-            .Display
-        End With
-    Next k
-
-End Sub
+Function SheetExists(n As String) As Boolean
+    On Error Resume Next
+    SheetExists = Not Sheets(n) Is Nothing
+    On Error GoTo 0
+End Function
