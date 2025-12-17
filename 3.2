@@ -1,7 +1,7 @@
 '===================================
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
-'Version: v3.3
+'Version: v3.4
 '===================================
 
 Private Sub Workbook_Open()
@@ -73,7 +73,7 @@ Sub SplitDataByColumnJ()
             val = Trim(wsSource.Cells(j, 10).Value)
             If Not IsError(Application.Match(val, groups(i), 0)) Then
                 wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
-                wsNew.Cells(destRow, 12).Value = ""
+                wsNew.Cells(destRow, 12).Value = "" ' Email? starts blank
 
                 Dim rowD As String: rowD = UCase(Trim(wsSource.Cells(j, 4).Value))
                 Dim rowE As String: rowE = UCase(Trim(wsSource.Cells(j, 5).Value))
@@ -247,7 +247,7 @@ Sub EmailRemainingByClient()
         outMsg = outMsg & "</table><br><br>Thank you,<br>"
 
         With outMail
-            .To = "" ' Fill in as needed
+            .To = "" ' Fill manually
             .Subject = client & " | Missing Allocations | Barclays | " & Format(Date, "dd-mmm-yyyy")
             .HTMLBody = outMsg
             .Display
