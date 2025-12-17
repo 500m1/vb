@@ -1,7 +1,7 @@
 '===================================
 'Macro Name: Trade APS Split Generator
 'Peter Riad 2025
-'Version: v3.2+
+'Version: v3.3
 '===================================
 
 Private Sub Workbook_Open()
@@ -9,6 +9,12 @@ Private Sub Workbook_Open()
     AddClearDataButton
     AddEmailButton
 End Sub
+
+Function SheetExists(sheetName As String) As Boolean
+    On Error Resume Next
+    SheetExists = Not Sheets(sheetName) Is Nothing
+    On Error GoTo 0
+End Function
 
 Sub SplitDataByColumnJ()
     Dim wsSource As Worksheet: Set wsSource = ThisWorkbook.Sheets("MainData")
@@ -38,18 +44,18 @@ Sub SplitDataByColumnJ()
     Dim lookupData As Variant
     lookupData = wsLookup.Range("A2:J" & wsLookup.Cells(wsLookup.Rows.Count, "C").End(xlUp).Row).Value
 
-    Dim wsNew As Worksheet, wsFirst As Worksheet, destRow As Long, i As Long, j As Long
-    Dim val As String
+    Dim i As Long, j As Long, wsNew As Worksheet, val As String
+    Dim wsFirst As Worksheet
     Application.ScreenUpdating = False
 
     For i = 0 To UBound(groups)
         On Error Resume Next
         Application.DisplayAlerts = False
-        ThisWorkbook.Sheets(sheetNames(i)).Delete
+        Sheets(sheetNames(i)).Delete
         Application.DisplayAlerts = True
         On Error GoTo 0
 
-        Set wsNew = ThisWorkbook.Sheets.Add(After:=Sheets(Sheets.Count))
+        Set wsNew = Sheets.Add(After:=Sheets(Sheets.Count))
         wsNew.Name = sheetNames(i)
         If i = 0 Then Set wsFirst = wsNew
 
@@ -61,7 +67,7 @@ Sub SplitDataByColumnJ()
         wsNew.Range("V1").Font.Bold = True
         wsNew.Range("V1").Interior.Color = RGB(255, 255, 0)
 
-        destRow = 2
+        Dim destRow As Long: destRow = 2
 
         For j = 2 To lastRow
             val = Trim(wsSource.Cells(j, 10).Value)
@@ -69,15 +75,15 @@ Sub SplitDataByColumnJ()
                 wsNew.Range("A" & destRow & ":K" & destRow).Value = wsSource.Range("C" & j & ":M" & j).Value
                 wsNew.Cells(destRow, 12).Value = ""
 
-                Dim rowD As String: rowD = UCase(wsSource.Cells(j, 4).Text)
-                Dim rowE As String: rowE = UCase(wsSource.Cells(j, 5).Text)
+                Dim rowD As String: rowD = UCase(Trim(wsSource.Cells(j, 4).Value))
+                Dim rowE As String: rowE = UCase(Trim(wsSource.Cells(j, 5).Value))
                 Dim matched As Boolean: matched = False
 
                 Dim l As Long
                 For l = 1 To UBound(lookupData)
                     Dim lookupC As String: lookupC = UCase(lookupData(l, 3))
                     Dim lookupD As String: lookupD = UCase(lookupData(l, 4))
-                    If (lookupC <> "" And lookupC <> "-") Then
+                    If lookupC <> "" And lookupC <> "-" Then
                         If rowD = lookupC And rowE = lookupD Then matched = True
                     ElseIf rowE = lookupD Then
                         matched = True
@@ -101,15 +107,15 @@ Sub SplitDataByColumnJ()
             End If
         Next j
 
-        ' Date mismatch coloring
+        ' Date highlight
         Dim todayVal As String: todayVal = Format(Date, "yyyymmdd")
         For j = 2 To destRow - 1
-            If Trim(wsNew.Cells(j, 4).Text) <> todayVal Then
+            If Trim(wsNew.Cells(j, 4).Value) <> todayVal Then
                 wsNew.Cells(j, 4).Interior.Color = RGB(255, 0, 0)
             End If
         Next j
 
-        ' Tab coloring based on row count
+        ' Tab Color by row count
         Dim dataCount As Long: dataCount = destRow - 2
         Select Case dataCount
             Case 0: wsNew.Tab.Color = RGB(0, 176, 80)
@@ -118,17 +124,19 @@ Sub SplitDataByColumnJ()
             Case Is > 40: wsNew.Tab.Color = RGB(255, 0, 0)
         End Select
 
-        ' EOD Chased row highlight
+        ' Highlight if in EOD Chased
         If SheetExists("EOD Chased") Then
             Dim wsEOD As Worksheet: Set wsEOD = Sheets("EOD Chased")
             Dim eodRow As Long: eodRow = wsEOD.Cells(wsEOD.Rows.Count, "A").End(xlUp).Row
             If eodRow > 1 Then
                 Dim eodData As Variant: eodData = wsEOD.Range("A2:K" & eodRow).Value
                 For j = 2 To destRow - 1
-                    Dim currentRow As String: currentRow = Join(Application.Transpose(Application.Transpose(wsNew.Range("A" & j & ":K" & j).Value)), "|")
+                    Dim currentRowData As Variant
+                    currentRowData = Application.Transpose(Application.Transpose(wsNew.Range("A" & j & ":K" & j).Value))
+                    Dim currentRowStr As String: currentRowStr = Join(currentRowData, "|")
                     Dim r As Variant
                     For Each r In eodData
-                        If currentRow = Join(r, "|") Then
+                        If currentRowStr = Join(Application.Transpose(Application.Transpose(r)), "|") Then
                             wsNew.Rows(j).Interior.Color = RGB(200, 200, 200)
                             Exit For
                         End If
@@ -137,13 +145,13 @@ Sub SplitDataByColumnJ()
             End If
         End If
 
-        ' Sort & Format
+        ' Sorting
         With wsNew.Sort
             .SortFields.Clear
-            .SortFields.Add wsNew.Range("J2:J" & destRow - 1)
-            .SortFields.Add wsNew.Range("K2:K" & destRow - 1)
-            .SortFields.Add wsNew.Range("I2:I" & destRow - 1)
-            .SortFields.Add wsNew.Range("E2:E" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("J2:J" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("K2:K" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("I2:I" & destRow - 1)
+            .SortFields.Add Key:=wsNew.Range("E2:E" & destRow - 1)
             .SetRange wsNew.Range("A1:V" & destRow - 1)
             .Header = xlYes
             .Apply
@@ -155,14 +163,8 @@ Sub SplitDataByColumnJ()
 
     wsFirst.Activate
     Application.ScreenUpdating = True
-    MsgBox "Data split, labeled, validated, and highlighted!"
+    MsgBox "Data split, validated, and highlighted!"
 End Sub
-
-Function SheetExists(sheetName As String) As Boolean
-    On Error Resume Next
-    SheetExists = Not Sheets(sheetName) Is Nothing
-    On Error GoTo 0
-End Function
 
 Sub ClearMainDataSheet()
     Dim ws As Worksheet
@@ -172,7 +174,7 @@ Sub ClearMainDataSheet()
             ws.Delete
             Application.DisplayAlerts = True
         ElseIf ws.Name = "MainData" Then
-            ws.Range("A2:Z" & ws.Cells(ws.Rows.Count, "A").End(xlUp).Row).ClearContents
+            ws.Rows("2:" & ws.Cells(ws.Rows.Count, "A").End(xlUp).Row).ClearContents
         End If
     Next ws
     MsgBox "MainData cleared and split sheets removed!"
@@ -216,8 +218,8 @@ Sub EmailRemainingByClient()
             Dim lastRow As Long: lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
             Dim i As Long
             For i = 2 To lastRow
-                If LCase(Trim(ws.Cells(i, 12).Text)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Text)) = "y" Then
-                    Dim clientKey As String: clientKey = ws.Cells(i, 16).Text
+                If LCase(Trim(ws.Cells(i, 12).Value)) = "yes" Or LCase(Trim(ws.Cells(i, 12).Value)) = "y" Then
+                    Dim clientKey As String: clientKey = ws.Cells(i, 16).Value
                     If clientKey <> "" Then
                         If Not clientRows.exists(clientKey) Then Set clientRows(clientKey) = New Collection
                         clientRows(clientKey).Add ws.Rows(i)
@@ -232,8 +234,7 @@ Sub EmailRemainingByClient()
 
     For Each client In clientRows.keys
         Set outMail = olApp.CreateItem(0)
-        Dim outMsg As String
-        outMsg = "<b>Missing Allocations:</b><br><br><table border='1' cellpadding='3'><tr>"
+        Dim outMsg As String: outMsg = "<b>Missing Allocations:</b><br><br><table border='1' cellpadding='3'><tr>"
         For i = 1 To 11: outMsg = outMsg & "<th>" & clientRows(client)(1).Parent.Cells(1, i).Text & "</th>": Next i
         outMsg = outMsg & "</tr>"
 
@@ -243,11 +244,10 @@ Sub EmailRemainingByClient()
             For i = 1 To 11: outMsg = outMsg & "<td>" & rw.Cells(1, i).Text & "</td>": Next i
             outMsg = outMsg & "</tr>"
         Next rw
-
         outMsg = outMsg & "</table><br><br>Thank you,<br>"
 
         With outMail
-            .To = "" ' <- Fill in recipient
+            .To = "" ' Fill in as needed
             .Subject = client & " | Missing Allocations | Barclays | " & Format(Date, "dd-mmm-yyyy")
             .HTMLBody = outMsg
             .Display
