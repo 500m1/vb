@@ -100,6 +100,165 @@ Private Sub ColorRow(wsOut As Worksheet, outR As Long, _
     wsOut.Rows(outR).RowHeight = 16
 End Sub
 
+Private Sub WriteGroupMixed(wsOut As Worksheet, outR As Long, _
+    note As String, gmi As String, product As String, dates As String, price As Double, _
+    hoNetQ As Double, hoNetV As Double, dkNetQ As Double, dkNetV As Double, _
+    hoMem As String, dkMem As String, sec As String, rData() As String, _
+    rRawQty() As Double, rEffQty() As Double, rEffVal() As Double)
+
+    ' Separator row — amber color for mixed group
+    Dim bgC As Long : bgC = RGB(255,242,204)
+    Dim fgC As Long : fgC = RGB(127,96,0)
+    Dim bdC As Long : bdC = RGB(197,158,0)
+
+    Dim c As Long
+    For c = 1 To 14
+        wsOut.Cells(outR, c).Interior.Color = bdC
+        wsOut.Cells(outR, c).Font.Color     = RGB(255,255,255)
+        wsOut.Cells(outR, c).Font.Size      = 10
+        wsOut.Cells(outR, c).Font.Name      = "Calibri"
+        wsOut.Cells(outR, c).Font.Bold      = False
+        wsOut.Cells(outR, c).Value          = ""
+    Next c
+    wsOut.Cells(outR,1).Value  = gmi : wsOut.Cells(outR,1).Font.Bold = True
+    wsOut.Cells(outR,2).Value  = dates
+    wsOut.Cells(outR,3).Value  = "HO:" & Format(hoNetQ,"+0.###;-0.###;0") & _
+                                  " DK:" & Format(dkNetQ,"+0.###;-0.###;0")
+    wsOut.Cells(outR,4).Value  = product
+    wsOut.Cells(outR,5).Value  = Format(price, "0.0000")
+    wsOut.Cells(outR,9).Value  = note
+    wsOut.Cells(outR,9).WrapText = True : wsOut.Cells(outR,9).Font.Size = 9
+    wsOut.Cells(outR,12).Value = "HO val:" & Format(hoNetV,"+#,##0.00;-#,##0.00;0") & _
+                                  " DK val:" & Format(dkNetV,"#,##0.00")
+    wsOut.Cells(outR,13).Value = sec
+    wsOut.Cells(outR,14).Value = "NEEDS REVIEW"
+    wsOut.Cells(outR,14).Font.Bold = True
+    wsOut.Cells(outR,14).HorizontalAlignment = xlHAlignCenter
+    wsOut.Rows(outR).RowHeight = 20
+    outR = outR + 1
+
+    ' Sort HO rows by abs qty descending then write in orange tint
+    Dim hoBgC As Long : hoBgC = RGB(255,230,180)  ' amber/orange for HO
+    Dim hoBdC As Long : hoBdC = RGB(197,158,0)
+    Dim dkBgC As Long : dkBgC = RGB(226,239,218)   ' green tint for DK
+    Dim dkBdC As Long : dkBdC = RGB(112,173,71)
+    Dim rowFgC As Long : rowFgC = RGB(50,50,50)
+
+    ' Write HO rows sorted by abs qty desc
+    If hoMem <> "" Then
+        ' Sort HO indices by abs qty
+        Dim hoArr() As String : hoArr = Split(hoMem, "|")
+        Dim hoN As Long : hoN = UBound(hoArr) + 1
+        Dim hoSorted() As Long
+        ReDim hoSorted(hoN - 1)
+        Dim hi As Long
+        For hi = 0 To hoN - 1
+            If Trim(hoArr(hi)) <> "" Then hoSorted(hi) = CLng(Trim(hoArr(hi)))
+        Next hi
+        ' Bubble sort descending by abs qty
+        Dim si As Long, sj As Long, stmp As Long
+        For si = 0 To hoN - 2
+            For sj = 0 To hoN - si - 2
+                If Abs(rRawQty(hoSorted(sj))) < Abs(rRawQty(hoSorted(sj+1))) Then
+                    stmp = hoSorted(sj) : hoSorted(sj) = hoSorted(sj+1) : hoSorted(sj+1) = stmp
+                End If
+            Next sj
+        Next si
+        For hi = 0 To hoN - 1
+            Dim hri As Long : hri = hoSorted(hi)
+            If hri = 0 Then GoTo NextHO2
+            For c = 1 To 12
+                wsOut.Cells(outR, c).Value = rData(hri, c)
+            Next c
+            Dim hoAct As String : hoAct = Trim(rData(hri, 9))
+            wsOut.Cells(outR,9).Value = IIf(hoAct="", "HO — NEEDS REVIEW", hoAct & " | NEEDS REVIEW")
+            wsOut.Cells(outR,13).Value = rData(hri, 13)
+            wsOut.Cells(outR,14).Value = "HO SIDE"
+            ' Color HO rows amber
+            For c = 1 To 14
+                With wsOut.Cells(outR, c)
+                    .Interior.Color = hoBgC : .Font.Color = rowFgC
+                    .Font.Bold = False : .Font.Size = 10 : .Font.Name = "Calibri"
+                    .VerticalAlignment = xlVAlignCenter
+                    .Borders(xlEdgeLeft).LineStyle   = xlContinuous
+                    .Borders(xlEdgeRight).LineStyle  = xlContinuous
+                    .Borders(xlEdgeTop).LineStyle    = xlContinuous
+                    .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                    .Borders(xlEdgeLeft).Color  = hoBdC : .Borders(xlEdgeRight).Color = hoBdC
+                    .Borders(xlEdgeTop).Color   = hoBdC : .Borders(xlEdgeBottom).Color = hoBdC
+                    .Borders(xlEdgeLeft).Weight  = xlThin : .Borders(xlEdgeRight).Weight = xlThin
+                    .Borders(xlEdgeTop).Weight   = xlThin : .Borders(xlEdgeBottom).Weight = xlThin
+                End With
+            Next c
+            wsOut.Rows(outR).RowHeight = 16
+            outR = outR + 1
+NextHO2:
+        Next hi
+    End If
+
+    ' Divider row between HO and DK
+    For c = 1 To 14
+        wsOut.Cells(outR, c).Interior.Color = RGB(200,200,200)
+        wsOut.Cells(outR, c).Value = ""
+    Next c
+    wsOut.Cells(outR,9).Value = "── DK side below ──"
+    wsOut.Cells(outR,9).Font.Size = 9
+    wsOut.Cells(outR,9).Font.Color = RGB(100,100,100)
+    wsOut.Rows(outR).RowHeight = 12
+    outR = outR + 1
+
+    ' Write DK rows sorted by abs qty desc
+    If dkMem <> "" Then
+        Dim dkArr() As String : dkArr = Split(dkMem, "|")
+        Dim dkN As Long : dkN = UBound(dkArr) + 1
+        Dim dkSorted() As Long
+        ReDim dkSorted(dkN - 1)
+        Dim di As Long
+        For di = 0 To dkN - 1
+            If Trim(dkArr(di)) <> "" Then dkSorted(di) = CLng(Trim(dkArr(di)))
+        Next di
+        For si = 0 To dkN - 2
+            For sj = 0 To dkN - si - 2
+                If Abs(rRawQty(dkSorted(sj))) < Abs(rRawQty(dkSorted(sj+1))) Then
+                    stmp = dkSorted(sj) : dkSorted(sj) = dkSorted(sj+1) : dkSorted(sj+1) = stmp
+                End If
+            Next sj
+        Next si
+        For di = 0 To dkN - 1
+            Dim dri As Long : dri = dkSorted(di)
+            If dri = 0 Then GoTo NextDK2
+            For c = 1 To 12
+                wsOut.Cells(outR, c).Value = rData(dri, c)
+            Next c
+            Dim dkAct As String : dkAct = Trim(rData(dri, 9))
+            wsOut.Cells(outR,9).Value = IIf(dkAct="", "DK — NEEDS REVIEW", dkAct & " | NEEDS REVIEW")
+            wsOut.Cells(outR,13).Value = rData(dri, 13)
+            wsOut.Cells(outR,14).Value = "DK SIDE"
+            For c = 1 To 14
+                With wsOut.Cells(outR, c)
+                    .Interior.Color = dkBgC : .Font.Color = rowFgC
+                    .Font.Bold = False : .Font.Size = 10 : .Font.Name = "Calibri"
+                    .VerticalAlignment = xlVAlignCenter
+                    .Borders(xlEdgeLeft).LineStyle   = xlContinuous
+                    .Borders(xlEdgeRight).LineStyle  = xlContinuous
+                    .Borders(xlEdgeTop).LineStyle    = xlContinuous
+                    .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                    .Borders(xlEdgeLeft).Color  = dkBdC : .Borders(xlEdgeRight).Color = dkBdC
+                    .Borders(xlEdgeTop).Color   = dkBdC : .Borders(xlEdgeBottom).Color = dkBdC
+                    .Borders(xlEdgeLeft).Weight  = xlThin : .Borders(xlEdgeRight).Weight = xlThin
+                    .Borders(xlEdgeTop).Weight   = xlThin : .Borders(xlEdgeBottom).Weight = xlThin
+                End With
+            Next c
+            wsOut.Rows(outR).RowHeight = 16
+            outR = outR + 1
+NextDK2:
+        Next di
+    End If
+
+    wsOut.Rows(outR).RowHeight = 5
+    outR = outR + 1
+End Sub
+
 Private Sub WriteGroup(wsOut As Worksheet, outR As Long, _
     st As String, note As String, _
     gmi As String, product As String, dates As String, price As Double, _
@@ -543,65 +702,43 @@ NextDI:
 NextHI:
             Next hi
 
-            ' Remaining unmatched rows in this group → TRUE BREAK
-            Dim remMem As String : remMem = ""
-            Dim remNetQ As Double : remNetQ = 0
-            Dim remNetV As Double : remNetV = 0
-            Dim remHasHO As Boolean : remHasHO = False
-            Dim remHasDK As Boolean : remHasDK = False
+            ' Collect remaining unmatched rows into HO and DK buckets
+            Dim remHoMem As String : remHoMem = ""
+            Dim remDkMem As String : remDkMem = ""
+            Dim remHoNetQ As Double : remHoNetQ = 0
+            Dim remHoNetV As Double : remHoNetV = 0
+            Dim remDkNetQ As Double : remDkNetQ = 0
+            Dim remDkNetV As Double : remDkNetV = 0
 
             For hi = 1 To hoCount
                 If Not hoUsed(hi) Then
-                    remMem = IIf(remMem="", CStr(hoIdx(hi)), remMem & "|" & CStr(hoIdx(hi)))
-                    remNetQ = remNetQ + rEffQty(hoIdx(hi))
-                    remNetV = remNetV + rEffVal(hoIdx(hi))
-                    remHasHO = True
+                    remHoMem = IIf(remHoMem="", CStr(hoIdx(hi)), remHoMem & "|" & CStr(hoIdx(hi)))
+                    remHoNetQ = remHoNetQ + rEffQty(hoIdx(hi))
+                    remHoNetV = remHoNetV + rRawVal(hoIdx(hi))
+                    rResolved(hoIdx(hi)) = True
                 End If
             Next hi
             For di = 1 To dkCount
                 If Not dkUsed(di) Then
-                    remMem = IIf(remMem="", CStr(dkIdx(di)), remMem & "|" & CStr(dkIdx(di)))
-                    remNetQ = remNetQ + rEffQty(dkIdx(di))
-                    remNetV = remNetV + rEffVal(dkIdx(di))
-                    remHasDK = True
+                    remDkMem = IIf(remDkMem="", CStr(dkIdx(di)), remDkMem & "|" & CStr(dkIdx(di)))
+                    remDkNetQ = remDkNetQ + rEffQty(dkIdx(di))
+                    remDkNetV = remDkNetV + rRawVal(dkIdx(di))
+                    rResolved(dkIdx(di)) = True
                 End If
             Next di
 
-            If remMem <> "" Then
-                ' Check if remainder nets to zero (could be a price break)
-                Dim remSt As String : Dim remN As String
-                If Abs(remNetQ) < 0.001 Then
-                    If Abs(remNetV) < 0.01 Then
-                        remSt = "FALSE BREAK"
-                        remN = "Remaining rows net to zero after sub-group matching."
-                    ElseIf Abs(remNetV) <= APS_THRESHOLD Then
-                        remSt = "APS ROUNDING"
-                        remN = "Remaining rows: qty=0, value diff " & Format(remNetV,"+#,##0.00;-#,##0.00") & " APS rounding."
-                    Else
-                        remSt = "PRICE BREAK"
-                        remN = "Remaining rows: qty=0 but cash does not net: " & Format(remNetV,"+#,##0.00;-#,##0.00") & "."
-                    End If
-                Else
-                    remSt = "TRUE BREAK"
-                    remN = "Open qty: " & Format(remNetQ,"+0.###;-0.###")
-                    If Abs(remNetV) >= 0.01 Then remN = remN & " | Net value: " & Format(remNetV,"+#,##0.00;-#,##0.00")
-                    If Not remHasHO Then remN = remN & " | No H/O side."
-                    If Not remHasDK Then remN = remN & " | No DK side."
-                End If
-
-                If oc < MAXG Then
-                    oc = oc + 1
-                    oLabel(oc)=remSt:oNote(oc)=remN:oGMI(oc)=g1GMI(g):oProd(oc)=g1Prod(g)
-                    oDates(oc)=g1Date(g):oPrice(oc)=g1MinPx(g):oNetQty(oc)=remNetQ
-                    oNetVal(oc)=remNetV:oMembers(oc)=remMem:oSec(oc)=g1Sec(g)
-                    Call CountStat(remSt,cFB,cAPS,cPB,cTB,cSS)
-                End If
-
-                ' Mark remainder as resolved (handled by true/price break output)
-                Dim rPts() As String : rPts = Split(remMem, "|")
-                For p = 0 To UBound(rPts)
-                    If rPts(p)<>"" Then rResolved(CLng(rPts(p))) = True
-                Next p
+            If remHoMem <> "" Or remDkMem <> "" Then
+                ' Write as NEEDS REVIEW — sorted HO then DK with color coding
+                Dim remNote As String
+                remNote = "Mixed group — HO qty=" & Format(Abs(remHoNetQ),"0.###") & _
+                          " DK qty=" & Format(remDkNetQ,"0.###") & _
+                          " HO val=" & Format(remHoNetV,"#,##0.00") & _
+                          " DK val=" & Format(remDkNetV,"#,##0.00") & _
+                          ". Rows sorted by qty — highlight to verify zero nets."
+                Call WriteGroupMixed(wsOut, outR, remNote, g1GMI(g), g1Prod(g), _
+                    g1Date(g), g1MinPx(g), remHoNetQ, remHoNetV, remDkNetQ, remDkNetV, _
+                    remHoMem, remDkMem, g1Sec(g), rData, rRawQty, rEffQty, rEffVal)
+                cTB = cTB + 1
             End If
 
             g1Mem(g) = ""
