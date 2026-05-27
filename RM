@@ -238,7 +238,8 @@ Public Sub RunRecon()
         Dim ho As Boolean : ho = IsHO(rData(rc, 6))
         Dim q As Double : q = SafeDbl(rData(rc, 3))
         Dim v As Double : v = SafeDbl(rData(rc, 12))
-        If ho Then q = -q : v = -v
+        If ho Then q = -q
+        ' Value is already correctly signed by the rec system — do not flip
         rEffQty(rc)   = q
         rEffVal(rc)   = v
         rPriceKey(rc) = PriceKey(SafeDbl(rData(rc, 5)))
