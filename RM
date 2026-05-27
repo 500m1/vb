@@ -1,5 +1,789 @@
-MsgBox "Pass 1 groups built: " & gc1 & Chr(10) & _
-       "Group 1 key: " & g1Key(1) & Chr(10) & _
-       "Group 1 rows: " & g1Rows(1) & Chr(10) & _
-       "Group 1 NetQty: " & g1NetQ(1) & Chr(10) & _
-       "Group 1 NetVal: " & g1NetV(1), vbInformation, "Pass 1 Diagnostic"
+Attribute VB_Name = "ReconMacro"
+Option Explicit
+
+' ════════════════════════════════════════════════════════════════════
+' GMI / CBT Reconciliation Analyzer
+' Pass 1: GMI + Product + Date + Price
+' Pass 2: GMI + Product + Price (multi-date / T+2)
+' Pass 3: Product + Price (cross-section CUST/HOUSE transfer)
+' Pass 4: Remaining = TRUE BREAK or SINGLE-SIDED
+' ════════════════════════════════════════════════════════════════════
+
+Private Const APS_THRESHOLD As Double = 20.0
+
+' ── Safe type helpers ─────────────────────────────────────────────
+Private Function SafeDbl(v As Variant) As Double
+    Dim s As String
+    On Error Resume Next
+    If IsEmpty(v) Or IsNull(v) Then SafeDbl = 0 : Exit Function
+    s = Trim(CStr(v))
+    s = Replace(s, "CAD", "") : s = Replace(s, "USD", "")
+    s = Replace(s, "$", "") : s = Replace(s, ",", "") : s = Replace(s, " ", "")
+    If Left(s, 1) = "(" And Right(s, 1) = ")" Then
+        s = "-" & Mid(s, 2, Len(s) - 2)
+    End If
+    If s = "" Or s = "-" Then SafeDbl = 0 : Exit Function
+    If IsNumeric(s) Then SafeDbl = CDbl(s) Else SafeDbl = 0
+    On Error GoTo 0
+End Function
+
+Private Function SafeStr(v As Variant) As String
+    On Error Resume Next
+    If IsEmpty(v) Or IsNull(v) Then SafeStr = "" : Exit Function
+    SafeStr = Trim(CStr(v))
+    On Error GoTo 0
+End Function
+
+Private Function IsHO(hodk As String) As Boolean
+    IsHO = (Left(UCase(Trim(hodk)), 1) = "H")
+End Function
+
+' ── Detect section header rows ────────────────────────────────────
+Private Function IsHeaderRow(ws As Worksheet, rowNum As Long, _
+                             ByRef secLabel As String) As Boolean
+    Dim j As Long
+    Dim full As String
+    full = ""
+    For j = 1 To 7
+        full = full & " " & UCase(SafeStr(ws.Cells(rowNum, j).Value))
+    Next j
+    full = Trim(full)
+
+    Dim kw(11) As String
+    kw(0)="HOUSE" : kw(1)="CUST" : kw(2)="CUSTOMER" : kw(3)="HSE"
+    kw(4)="SUS" : kw(5)="SUSPENSE" : kw(6)="BREAKS" : kw(7)="ADJUSTMENT"
+    kw(8)="CANADIAN" : kw(9)="BARCLAYS" : kw(10)="GLOBAL" : kw(11)="RBC"
+
+    Dim k As Long
+    For k = 0 To 11
+        If InStr(full, kw(k)) > 0 Then
+            If Len(full) > 2 Then secLabel = Trim(full)
+            IsHeaderRow = True
+            Exit Function
+        End If
+    Next k
+
+    Dim a As String
+    a = UCase(SafeStr(ws.Cells(rowNum, 1).Value))
+    If a = "GMI" Or a = "DATE" Or a = "QTY" Or a = "MONTH" Or a = "ACCOUNT" Then
+        IsHeaderRow = True
+        Exit Function
+    End If
+    IsHeaderRow = False
+End Function
+
+' ── Classify based on net qty and net value ───────────────────────
+Private Function Classify(netQty As Double, netVal As Double, _
+                          multiDate As Boolean, crossSection As Boolean, _
+                          hasHO As Boolean, hasDK As Boolean) As String
+    Dim qz As Boolean : qz = (Abs(netQty) < 0.001)
+    Dim vz As Boolean : vz = (Abs(netVal) < 0.01)
+    Dim sm As Boolean : sm = (Abs(netVal) <= APS_THRESHOLD)
+
+    If qz And vz Then
+        Classify = "FALSE BREAK"
+    ElseIf qz And Not vz And sm Then
+        Classify = "APS ROUNDING"
+    ElseIf qz And Not vz And Not sm Then
+        Classify = "PRICE BREAK"
+    Else
+        Classify = "UNRESOLVED"
+    End If
+End Function
+
+Private Function BuildNote(st As String, netQty As Double, netVal As Double, _
+                           multiDate As Boolean, dates As String, _
+                           crossSection As Boolean, sec As String, _
+                           hasHO As Boolean, hasDK As Boolean) As String
+    Dim n As String
+    Select Case st
+        Case "FALSE BREAK"
+            n = "Net qty = 0, net value = 0."
+            If multiDate Then n = n & " Multi-date / T+2 cumulative. Dates: " & dates
+            If crossSection Then n = n & " | CUST/HOUSE transfer: " & sec
+        Case "APS ROUNDING"
+            n = "Net qty = 0. Value diff " & Format(netVal, "+#,##0.00;-#,##0.00") & _
+                " within $20 APS rounding threshold."
+            If multiDate Then n = n & " Dates: " & dates
+            If crossSection Then n = n & " | CUST/HOUSE transfer: " & sec
+        Case "PRICE BREAK"
+            n = "Net qty = 0 but cash does not net: " & _
+                Format(netVal, "+#,##0.00;-#,##0.00") & ". Possible price correction."
+            If multiDate Then n = n & " Dates: " & dates
+        Case "TRUE BREAK"
+            n = "Open qty: " & Format(netQty, "+0.###;-0.###")
+            If Abs(netVal) >= 0.01 Then
+                n = n & " | Net value: " & Format(netVal, "+#,##0.00;-#,##0.00")
+            End If
+            If Not hasHO Then n = n & " | No H/O cancel side."
+            If Not hasDK  Then n = n & " | No DK add side."
+            If multiDate  Then n = n & " | Dates: " & dates
+        Case "SINGLE-SIDED"
+            n = "Single row — nothing to net against."
+    End Select
+    BuildNote = n
+End Function
+
+' ── Color helpers ─────────────────────────────────────────────────
+Private Sub GetColors(st As String, bgC As Long, fgC As Long, bdC As Long)
+    Select Case st
+        Case "FALSE BREAK"
+            bgC=RGB(226,239,218):fgC=RGB(55,86,35):bdC=RGB(112,173,71)
+        Case "APS ROUNDING"
+            bgC=RGB(235,245,220):fgC=RGB(55,86,35):bdC=RGB(112,173,71)
+        Case "PRICE BREAK"
+            bgC=RGB(221,238,255):fgC=RGB(31,73,125):bdC=RGB(46,117,182)
+        Case "TRUE BREAK"
+            bgC=RGB(252,228,214):fgC=RGB(132,60,12):bdC=RGB(192,80,77)
+        Case Else
+            bgC=RGB(237,237,237):fgC=RGB(89,89,89):bdC=RGB(128,128,128)
+    End Select
+End Sub
+
+Private Sub ColorRow(wsOut As Worksheet, outR As Long, _
+                     bgC As Long, fgC As Long, bdC As Long)
+    Dim c As Long
+    For c = 1 To 14
+        With wsOut.Cells(outR, c)
+            .Interior.Color = bgC
+            .Font.Color = fgC
+            .Font.Bold = False
+            .Font.Size = 10
+            .Font.Name = "Calibri"
+            .VerticalAlignment = xlVAlignCenter
+            .Borders(xlEdgeLeft).LineStyle  = xlContinuous
+            .Borders(xlEdgeRight).LineStyle = xlContinuous
+            .Borders(xlEdgeTop).LineStyle   = xlContinuous
+            .Borders(xlEdgeBottom).LineStyle= xlContinuous
+            .Borders(xlEdgeLeft).Color  = bdC
+            .Borders(xlEdgeRight).Color = bdC
+            .Borders(xlEdgeTop).Color   = bdC
+            .Borders(xlEdgeBottom).Color= bdC
+            .Borders(xlEdgeLeft).Weight  = xlThin
+            .Borders(xlEdgeRight).Weight = xlThin
+            .Borders(xlEdgeTop).Weight   = xlThin
+            .Borders(xlEdgeBottom).Weight= xlThin
+        End With
+    Next c
+    wsOut.Rows(outR).RowHeight = 16
+End Sub
+
+' ── Write separator + data rows for one group ─────────────────────
+Private Sub WriteGroup(wsOut As Worksheet, outR As Long, _
+    st As String, note As String, _
+    gmi As String, product As String, dates As String, price As Double, _
+    netQty As Double, netVal As Double, _
+    members As String, sec As String, rData() As String)
+
+    Dim bgC As Long, fgC As Long, bdC As Long
+    Call GetColors(st, bgC, fgC, bdC)
+
+    ' ── Separator row ──────────────────────────────────────────────
+    Dim c As Long
+    For c = 1 To 14
+        wsOut.Cells(outR, c).Interior.Color = bdC
+        wsOut.Cells(outR, c).Font.Color     = RGB(255,255,255)
+        wsOut.Cells(outR, c).Font.Size      = 10
+        wsOut.Cells(outR, c).Font.Name      = "Calibri"
+        wsOut.Cells(outR, c).Font.Bold      = False
+        wsOut.Cells(outR, c).Value          = ""
+    Next c
+    ' Map to exact input columns
+    wsOut.Cells(outR, 1).Value = gmi                                        ' A GMI
+    wsOut.Cells(outR, 1).Font.Bold = True
+    wsOut.Cells(outR, 2).Value = dates                                      ' B Date(s)
+    wsOut.Cells(outR, 3).Value = Format(netQty, "+0.###;-0.###;0")         ' C Net Qty
+    wsOut.Cells(outR, 4).Value = product                                    ' D Product
+    wsOut.Cells(outR, 5).Value = Format(price, "0.0000")                 ' E Price
+    wsOut.Cells(outR, 9).Value = note                                       ' I Action/Note
+    wsOut.Cells(outR, 9).WrapText = True
+    wsOut.Cells(outR, 9).Font.Size = 9
+    wsOut.Cells(outR, 12).Value = Format(netVal, "+#,##0.00;-#,##0.00;0") ' L Net Value
+    wsOut.Cells(outR, 13).Value = sec                                       ' M Section
+    wsOut.Cells(outR, 14).Value = st                                        ' N Status
+    wsOut.Cells(outR, 14).Font.Bold = True
+    wsOut.Cells(outR, 14).HorizontalAlignment = xlHAlignCenter
+    wsOut.Rows(outR).RowHeight = 18
+    outR = outR + 1
+
+    ' ── Data rows — all 12 cols preserved, col I appended, M+N added ──
+    If members = "" Then GoTo DoneRows
+    Dim parts() As String
+    parts = Split(members, "|")
+    Dim p As Long
+    For p = 0 To UBound(parts)
+        If Trim(parts(p)) = "" Then GoTo NextP
+        Dim ri As Long : ri = CLng(Trim(parts(p)))
+        For c = 1 To 12
+            wsOut.Cells(outR, c).Value = rData(ri, c)
+        Next c
+        Dim existAct As String : existAct = Trim(rData(ri, 9))
+        If existAct = "" Then
+            wsOut.Cells(outR, 9).Value = st
+        Else
+            wsOut.Cells(outR, 9).Value = existAct & " | " & st
+        End If
+        wsOut.Cells(outR, 13).Value = rData(ri, 13)  ' M Section
+        wsOut.Cells(outR, 14).Value = st              ' N Status
+        Call ColorRow(wsOut, outR, bgC, fgC, bdC)
+        outR = outR + 1
+NextP:
+    Next p
+
+DoneRows:
+    ' Spacer
+    wsOut.Rows(outR).RowHeight = 5
+    outR = outR + 1
+End Sub
+
+Private Sub CountStat(st As String, cFB As Long, cAPS As Long, _
+                      cPB As Long, cTB As Long, cSS As Long)
+    Select Case st
+        Case "FALSE BREAK"  : cFB  = cFB  + 1
+        Case "APS ROUNDING" : cAPS = cAPS + 1
+        Case "PRICE BREAK"  : cPB  = cPB  + 1
+        Case "TRUE BREAK"   : cTB  = cTB  + 1
+        Case "SINGLE-SIDED" : cSS  = cSS  + 1
+    End Select
+End Sub
+
+' ════════════════════════════════════════════════════════════════════
+' MAIN
+' ════════════════════════════════════════════════════════════════════
+Public Sub RunRecon()
+
+    Dim wsIn  As Worksheet
+    Dim wsOut As Worksheet
+    Set wsIn  = ThisWorkbook.Sheets("INPUT")
+    Set wsOut = ThisWorkbook.Sheets("RESULTS")
+
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    ' ── 1. Find last row ─────────────────────────────────────────
+    Dim lastRow As Long
+    lastRow = wsIn.Cells(wsIn.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 6 Then
+        MsgBox "No data found in INPUT sheet.", vbExclamation
+        GoTo Cleanup
+    End If
+
+    ' ── 2. Read input rows ───────────────────────────────────────
+    ' Cols 1-12 = A-L (GMI,Date,Qty,Product,Price,HODK,Acct,Comm,Action,User,SP,Value)
+    ' Col 13 = section label
+    Const MAXR As Long = 5000
+    Dim rData(MAXR, 13)  As String
+    Dim rEffQty(MAXR)    As Double
+    Dim rEffVal(MAXR)    As Double
+    Dim rResolved(MAXR)  As Boolean  ' True once assigned to a group
+    Dim rc As Long : rc = 0
+    Dim curSec As String : curSec = ""
+
+    Dim i As Long
+    For i = 6 To lastRow
+        Dim tmp As String : tmp = curSec
+        If IsHeaderRow(wsIn, i, tmp) Then
+            curSec = tmp
+            GoTo NextRIn
+        End If
+        Dim gv As String : gv = SafeStr(wsIn.Cells(i, 1).Value)
+        If gv = "" Then GoTo NextRIn
+        If rc >= MAXR Then GoTo NextRIn
+
+        rc = rc + 1
+        Dim col As Long
+        For col = 1 To 12
+            rData(rc, col) = SafeStr(wsIn.Cells(i, col).Value)
+        Next col
+        rData(rc, 13) = curSec
+
+        Dim ho As Boolean : ho = IsHO(rData(rc, 6))
+        Dim q As Double : q = SafeDbl(rData(rc, 3))
+        Dim v As Double : v = SafeDbl(rData(rc, 12))
+        If ho Then q = -q
+        If ho Then v = -v
+        rEffQty(rc) = q
+        rEffVal(rc) = v
+        rResolved(rc) = False
+NextRIn:
+    Next i
+
+    If rc = 0 Then
+        MsgBox "No valid data rows found.", vbExclamation
+        GoTo Cleanup
+    End If
+
+    ' ════════════════════════════════════════════════════════════
+    ' OUTPUT ARRAYS — store all resolved groups for ordered output
+    ' ════════════════════════════════════════════════════════════
+    Const MAXG As Long = 3000
+    Dim oLabel(MAXG)    As String
+    Dim oNote(MAXG)     As String
+    Dim oGMI(MAXG)      As String
+    Dim oProduct(MAXG)  As String
+    Dim oDates(MAXG)    As String
+    Dim oPrice(MAXG)    As Double
+    Dim oNetQty(MAXG)   As Double
+    Dim oNetVal(MAXG)   As Double
+    Dim oMembers(MAXG)  As String
+    Dim oSec(MAXG)      As String
+    Dim oc As Long : oc = 0
+
+    ' ════════════════════════════════════════════════════════════
+    ' PASS 1: GMI + Product + Date + Price
+    ' ════════════════════════════════════════════════════════════
+    Const MAXG1 As Long = 3000
+    Dim g1Key(MAXG1)    As String
+    Dim g1GMI(MAXG1)    As String
+    Dim g1Prod(MAXG1)   As String
+    Dim g1Date(MAXG1)   As String
+    Dim g1Price(MAXG1)  As Double
+    Dim g1NetQ(MAXG1)   As Double
+    Dim g1NetV(MAXG1)   As Double
+    Dim g1Rows(MAXG1)   As Long
+    Dim g1HasHO(MAXG1)  As Boolean
+    Dim g1HasDK(MAXG1)  As Boolean
+    Dim g1Mem(MAXG1)    As String
+    Dim g1Sec(MAXG1)    As String
+    Dim gc1 As Long : gc1 = 0
+
+    Dim r As Long
+    For r = 1 To rc
+        Dim k1 As String
+        k1 = rData(r,1) & "||" & rData(r,4) & "||" & rData(r,2) & "||" & _
+             Format(SafeDbl(rData(r,5)), "0.0000")
+
+        Dim gi1 As Long : gi1 = 0
+        Dim g As Long
+        For g = 1 To gc1
+            If g1Key(g) = k1 Then gi1 = g : Exit For
+        Next g
+        If gi1 = 0 Then
+            If gc1 >= MAXG1 Then GoTo NextRP1
+            gc1 = gc1 + 1 : gi1 = gc1
+            g1Key(gi1)   = k1
+            g1GMI(gi1)   = rData(r,1)
+            g1Prod(gi1)  = rData(r,4)
+            g1Date(gi1)  = rData(r,2)
+            g1Price(gi1) = SafeDbl(rData(r,5))
+            g1NetQ(gi1)  = 0 : g1NetV(gi1) = 0 : g1Rows(gi1) = 0
+            g1HasHO(gi1) = False : g1HasDK(gi1) = False
+            g1Mem(gi1)   = "" : g1Sec(gi1) = ""
+        End If
+        g1NetQ(gi1) = g1NetQ(gi1) + rEffQty(r)
+        g1NetV(gi1) = g1NetV(gi1) + rEffVal(r)
+        g1Rows(gi1) = g1Rows(gi1) + 1
+        If IsHO(rData(r,6)) Then g1HasHO(gi1) = True Else g1HasDK(gi1) = True
+        g1Mem(gi1) = IIf(g1Mem(gi1)="", CStr(r), g1Mem(gi1) & "|" & CStr(r))
+        If rData(r,13) <> "" Then
+            If InStr(g1Sec(gi1), rData(r,13)) = 0 Then
+                g1Sec(gi1) = IIf(g1Sec(gi1)="", rData(r,13), _
+                                 g1Sec(gi1) & " | " & rData(r,13))
+            End If
+        End If
+NextRP1:
+    Next r
+
+    ' Classify pass 1 groups
+    For g = 1 To gc1
+        If g1Rows(g) < 2 Then GoTo SkipP1Classify  ' single row — defer to later
+        Dim st1 As String
+        st1 = Classify(g1NetQ(g), g1NetV(g), False, False, g1HasHO(g), g1HasDK(g))
+        If st1 = "UNRESOLVED" Then GoTo SkipP1Classify
+
+        ' Resolved in pass 1 — store output and mark rows
+        If oc >= MAXG Then GoTo SkipP1Classify
+        oc = oc + 1
+        oLabel(oc)   = st1
+        oNote(oc)    = BuildNote(st1, g1NetQ(g), g1NetV(g), False, g1Date(g), _
+                                 InStr(g1Sec(g),"|")>0, g1Sec(g), g1HasHO(g), g1HasDK(g))
+        oGMI(oc)     = g1GMI(g)
+        oProduct(oc) = g1Prod(g)
+        oDates(oc)   = g1Date(g)
+        oPrice(oc)   = g1Price(g)
+        oNetQty(oc)  = g1NetQ(g)
+        oNetVal(oc)  = g1NetV(g)
+        oMembers(oc) = g1Mem(g)
+        oSec(oc)     = g1Sec(g)
+
+        ' Mark rows as resolved
+        Dim pts1() As String : pts1 = Split(g1Mem(g), "|")
+        Dim p As Long
+        For p = 0 To UBound(pts1)
+            If pts1(p) <> "" Then rResolved(CLng(pts1(p))) = True
+        Next p
+        g1Mem(g) = "" ' mark group as consumed
+
+SkipP1Classify:
+    Next g
+
+    ' ════════════════════════════════════════════════════════════
+    ' PASS 2: GMI + Product + Price (multi-date, unresolved only)
+    ' ════════════════════════════════════════════════════════════
+    Const MAXG2 As Long = 3000
+    Dim g2Key(MAXG2)    As String
+    Dim g2GMI(MAXG2)    As String
+    Dim g2Prod(MAXG2)   As String
+    Dim g2Price(MAXG2)  As Double
+    Dim g2NetQ(MAXG2)   As Double
+    Dim g2NetV(MAXG2)   As Double
+    Dim g2Rows(MAXG2)   As Long
+    Dim g2HasHO(MAXG2)  As Boolean
+    Dim g2HasDK(MAXG2)  As Boolean
+    Dim g2Mem(MAXG2)    As String
+    Dim g2Sec(MAXG2)    As String
+    Dim g2Dates(MAXG2)  As String
+    Dim gc2 As Long : gc2 = 0
+
+    For r = 1 To rc
+        If rResolved(r) Then GoTo NextRP2
+
+        Dim k2 As String
+        k2 = rData(r,1) & "||" & rData(r,4) & "||" & _
+             Format(SafeDbl(rData(r,5)), "0.0000")
+
+        Dim gi2 As Long : gi2 = 0
+        For g = 1 To gc2
+            If g2Key(g) = k2 Then gi2 = g : Exit For
+        Next g
+        If gi2 = 0 Then
+            If gc2 >= MAXG2 Then GoTo NextRP2
+            gc2 = gc2 + 1 : gi2 = gc2
+            g2Key(gi2)   = k2
+            g2GMI(gi2)   = rData(r,1)
+            g2Prod(gi2)  = rData(r,4)
+            g2Price(gi2) = SafeDbl(rData(r,5))
+            g2NetQ(gi2)  = 0 : g2NetV(gi2) = 0 : g2Rows(gi2) = 0
+            g2HasHO(gi2) = False : g2HasDK(gi2) = False
+            g2Mem(gi2)   = "" : g2Sec(gi2) = "" : g2Dates(gi2) = ""
+        End If
+        g2NetQ(gi2) = g2NetQ(gi2) + rEffQty(r)
+        g2NetV(gi2) = g2NetV(gi2) + rEffVal(r)
+        g2Rows(gi2) = g2Rows(gi2) + 1
+        If IsHO(rData(r,6)) Then g2HasHO(gi2) = True Else g2HasDK(gi2) = True
+        g2Mem(gi2) = IIf(g2Mem(gi2)="", CStr(r), g2Mem(gi2) & "|" & CStr(r))
+        If rData(r,2) <> "" Then
+            If InStr(g2Dates(gi2), rData(r,2)) = 0 Then
+                g2Dates(gi2) = IIf(g2Dates(gi2)="", rData(r,2), _
+                                   g2Dates(gi2) & ", " & rData(r,2))
+            End If
+        End If
+        If rData(r,13) <> "" Then
+            If InStr(g2Sec(gi2), rData(r,13)) = 0 Then
+                g2Sec(gi2) = IIf(g2Sec(gi2)="", rData(r,13), _
+                                 g2Sec(gi2) & " | " & rData(r,13))
+            End If
+        End If
+NextRP2:
+    Next r
+
+    ' Classify pass 2
+    For g = 1 To gc2
+        If g2Rows(g) < 2 Then GoTo SkipP2Classify
+        Dim multiDate2 As Boolean
+        multiDate2 = (InStr(g2Dates(g), ",") > 0)
+        Dim crossSec2 As Boolean
+        crossSec2 = (InStr(g2Sec(g), "|") > 0)
+
+        Dim st2 As String
+        st2 = Classify(g2NetQ(g), g2NetV(g), multiDate2, crossSec2, _
+                       g2HasHO(g), g2HasDK(g))
+        If st2 = "UNRESOLVED" Then GoTo SkipP2Classify
+
+        If oc >= MAXG Then GoTo SkipP2Classify
+        oc = oc + 1
+        oLabel(oc)   = st2
+        oNote(oc)    = BuildNote(st2, g2NetQ(g), g2NetV(g), multiDate2, _
+                                 g2Dates(g), crossSec2, g2Sec(g), g2HasHO(g), g2HasDK(g))
+        oGMI(oc)     = g2GMI(g)
+        oProduct(oc) = g2Prod(g)
+        oDates(oc)   = g2Dates(g)
+        oPrice(oc)   = g2Price(g)
+        oNetQty(oc)  = g2NetQ(g)
+        oNetVal(oc)  = g2NetV(g)
+        oMembers(oc) = g2Mem(g)
+        oSec(oc)     = g2Sec(g)
+
+        Dim pts2() As String : pts2 = Split(g2Mem(g), "|")
+        For p = 0 To UBound(pts2)
+            If pts2(p) <> "" Then rResolved(CLng(pts2(p))) = True
+        Next p
+        g2Mem(g) = ""
+SkipP2Classify:
+    Next g
+
+    ' ════════════════════════════════════════════════════════════
+    ' PASS 3: Product + Price (cross-GMI / cross-section transfer)
+    ' ════════════════════════════════════════════════════════════
+    Const MAXG3 As Long = 3000
+    Dim g3Key(MAXG3)    As String
+    Dim g3GMIs(MAXG3)   As String
+    Dim g3Prod(MAXG3)   As String
+    Dim g3Price(MAXG3)  As Double
+    Dim g3NetQ(MAXG3)   As Double
+    Dim g3NetV(MAXG3)   As Double
+    Dim g3Rows(MAXG3)   As Long
+    Dim g3HasHO(MAXG3)  As Boolean
+    Dim g3HasDK(MAXG3)  As Boolean
+    Dim g3Mem(MAXG3)    As String
+    Dim g3Sec(MAXG3)    As String
+    Dim g3Dates(MAXG3)  As String
+    Dim gc3 As Long : gc3 = 0
+
+    For r = 1 To rc
+        If rResolved(r) Then GoTo NextRP3
+
+        Dim k3 As String
+        k3 = rData(r,4) & "||" & Format(SafeDbl(rData(r,5)), "0.0000")
+
+        Dim gi3 As Long : gi3 = 0
+        For g = 1 To gc3
+            If g3Key(g) = k3 Then gi3 = g : Exit For
+        Next g
+        If gi3 = 0 Then
+            If gc3 >= MAXG3 Then GoTo NextRP3
+            gc3 = gc3 + 1 : gi3 = gc3
+            g3Key(gi3)   = k3
+            g3GMIs(gi3)  = ""
+            g3Prod(gi3)  = rData(r,4)
+            g3Price(gi3) = SafeDbl(rData(r,5))
+            g3NetQ(gi3)  = 0 : g3NetV(gi3) = 0 : g3Rows(gi3) = 0
+            g3HasHO(gi3) = False : g3HasDK(gi3) = False
+            g3Mem(gi3)   = "" : g3Sec(gi3) = "" : g3Dates(gi3) = ""
+        End If
+        g3NetQ(gi3) = g3NetQ(gi3) + rEffQty(r)
+        g3NetV(gi3) = g3NetV(gi3) + rEffVal(r)
+        g3Rows(gi3) = g3Rows(gi3) + 1
+        If IsHO(rData(r,6)) Then g3HasHO(gi3) = True Else g3HasDK(gi3) = True
+        g3Mem(gi3) = IIf(g3Mem(gi3)="", CStr(r), g3Mem(gi3) & "|" & CStr(r))
+        If rData(r,1) <> "" Then
+            If InStr(g3GMIs(gi3), rData(r,1)) = 0 Then
+                g3GMIs(gi3) = IIf(g3GMIs(gi3)="", rData(r,1), _
+                                  g3GMIs(gi3) & ", " & rData(r,1))
+            End If
+        End If
+        If rData(r,2) <> "" Then
+            If InStr(g3Dates(gi3), rData(r,2)) = 0 Then
+                g3Dates(gi3) = IIf(g3Dates(gi3)="", rData(r,2), _
+                                   g3Dates(gi3) & ", " & rData(r,2))
+            End If
+        End If
+        If rData(r,13) <> "" Then
+            If InStr(g3Sec(gi3), rData(r,13)) = 0 Then
+                g3Sec(gi3) = IIf(g3Sec(gi3)="", rData(r,13), _
+                                 g3Sec(gi3) & " | " & rData(r,13))
+            End If
+        End If
+NextRP3:
+    Next r
+
+    ' Classify pass 3
+    For g = 1 To gc3
+        If g3Rows(g) < 2 Then GoTo SkipP3Classify
+        Dim multiDate3 As Boolean
+        multiDate3 = (InStr(g3Dates(g), ",") > 0)
+        Dim crossSec3 As Boolean
+        crossSec3 = (InStr(g3Sec(g), "|") > 0)
+        Dim crossGMI3 As Boolean
+        crossGMI3 = (InStr(g3GMIs(g), ",") > 0)
+
+        Dim st3 As String
+        st3 = Classify(g3NetQ(g), g3NetV(g), multiDate3, _
+                       crossSec3 Or crossGMI3, g3HasHO(g), g3HasDK(g))
+        If st3 = "UNRESOLVED" Then GoTo SkipP3Classify
+
+        If oc >= MAXG Then GoTo SkipP3Classify
+        oc = oc + 1
+        oLabel(oc)   = st3
+        Dim secNote3 As String
+        secNote3 = IIf(crossSec3 Or crossGMI3, g3Sec(g), "")
+        oNote(oc)    = BuildNote(st3, g3NetQ(g), g3NetV(g), multiDate3, _
+                                 g3Dates(g), crossSec3 Or crossGMI3, secNote3, _
+                                 g3HasHO(g), g3HasDK(g))
+        oGMI(oc)     = g3GMIs(g)
+        oProduct(oc) = g3Prod(g)
+        oDates(oc)   = g3Dates(g)
+        oPrice(oc)   = g3Price(g)
+        oNetQty(oc)  = g3NetQ(g)
+        oNetVal(oc)  = g3NetV(g)
+        oMembers(oc) = g3Mem(g)
+        oSec(oc)     = g3Sec(g)
+
+        Dim pts3() As String : pts3 = Split(g3Mem(g), "|")
+        For p = 0 To UBound(pts3)
+            If pts3(p) <> "" Then rResolved(CLng(pts3(p))) = True
+        Next p
+        g3Mem(g) = ""
+SkipP3Classify:
+    Next g
+
+    ' ════════════════════════════════════════════════════════════
+    ' PASS 4: Remaining unresolved rows = TRUE BREAK or SINGLE-SIDED
+    ' Group by GMI + Product + Price for display purposes
+    ' ════════════════════════════════════════════════════════════
+    Const MAXG4 As Long = 3000
+    Dim g4Key(MAXG4)    As String
+    Dim g4GMI(MAXG4)    As String
+    Dim g4Prod(MAXG4)   As String
+    Dim g4Price(MAXG4)  As Double
+    Dim g4NetQ(MAXG4)   As Double
+    Dim g4NetV(MAXG4)   As Double
+    Dim g4Rows(MAXG4)   As Long
+    Dim g4HasHO(MAXG4)  As Boolean
+    Dim g4HasDK(MAXG4)  As Boolean
+    Dim g4Mem(MAXG4)    As String
+    Dim g4Sec(MAXG4)    As String
+    Dim g4Dates(MAXG4)  As String
+    Dim gc4 As Long : gc4 = 0
+
+    For r = 1 To rc
+        If rResolved(r) Then GoTo NextRP4
+
+        Dim k4 As String
+        k4 = rData(r,1) & "||" & rData(r,4) & "||" & _
+             Format(SafeDbl(rData(r,5)), "0.0000")
+
+        Dim gi4 As Long : gi4 = 0
+        For g = 1 To gc4
+            If g4Key(g) = k4 Then gi4 = g : Exit For
+        Next g
+        If gi4 = 0 Then
+            If gc4 >= MAXG4 Then GoTo NextRP4
+            gc4 = gc4 + 1 : gi4 = gc4
+            g4Key(gi4)   = k4
+            g4GMI(gi4)   = rData(r,1)
+            g4Prod(gi4)  = rData(r,4)
+            g4Price(gi4) = SafeDbl(rData(r,5))
+            g4NetQ(gi4)  = 0 : g4NetV(gi4) = 0 : g4Rows(gi4) = 0
+            g4HasHO(gi4) = False : g4HasDK(gi4) = False
+            g4Mem(gi4)   = "" : g4Sec(gi4) = "" : g4Dates(gi4) = ""
+        End If
+        g4NetQ(gi4) = g4NetQ(gi4) + rEffQty(r)
+        g4NetV(gi4) = g4NetV(gi4) + rEffVal(r)
+        g4Rows(gi4) = g4Rows(gi4) + 1
+        If IsHO(rData(r,6)) Then g4HasHO(gi4) = True Else g4HasDK(gi4) = True
+        g4Mem(gi4) = IIf(g4Mem(gi4)="", CStr(r), g4Mem(gi4) & "|" & CStr(r))
+        If rData(r,2) <> "" Then
+            If InStr(g4Dates(gi4), rData(r,2)) = 0 Then
+                g4Dates(gi4) = IIf(g4Dates(gi4)="", rData(r,2), _
+                                   g4Dates(gi4) & ", " & rData(r,2))
+            End If
+        End If
+        If rData(r,13) <> "" Then
+            If InStr(g4Sec(gi4), rData(r,13)) = 0 Then
+                g4Sec(gi4) = IIf(g4Sec(gi4)="", rData(r,13), _
+                                 g4Sec(gi4) & " | " & rData(r,13))
+            End If
+        End If
+NextRP4:
+    Next r
+
+    For g = 1 To gc4
+        Dim st4 As String
+        Dim multiDate4 As Boolean : multiDate4 = (InStr(g4Dates(g), ",") > 0)
+        If g4Rows(g) = 1 Then
+            st4 = "SINGLE-SIDED"
+        Else
+            st4 = "TRUE BREAK"
+        End If
+        If oc >= MAXG Then GoTo SkipP4
+        oc = oc + 1
+        oLabel(oc)   = st4
+        oNote(oc)    = BuildNote(st4, g4NetQ(g), g4NetV(g), multiDate4, _
+                                 g4Dates(g), InStr(g4Sec(g),"|")>0, g4Sec(g), _
+                                 g4HasHO(g), g4HasDK(g))
+        oGMI(oc)     = g4GMI(g)
+        oProduct(oc) = g4Prod(g)
+        oDates(oc)   = g4Dates(g)
+        oPrice(oc)   = g4Price(g)
+        oNetQty(oc)  = g4NetQ(g)
+        oNetVal(oc)  = g4NetV(g)
+        oMembers(oc) = g4Mem(g)
+        oSec(oc)     = g4Sec(g)
+SkipP4:
+    Next g
+
+    ' ════════════════════════════════════════════════════════════
+    ' WRITE OUTPUT
+    ' ════════════════════════════════════════════════════════════
+    With wsOut
+        If .AutoFilterMode Then .AutoFilterMode = False
+        .Range("A7:N3000").ClearContents
+        .Range("A7:N3000").Interior.ColorIndex = xlNone
+        .Range("A7:N3000").Borders.LineStyle = xlNone
+    End With
+
+    Dim outR As Long : outR = 7
+    Dim cFB As Long, cAPS As Long, cPB As Long, cTB As Long, cSS As Long
+    cFB=0 : cAPS=0 : cPB=0 : cTB=0 : cSS=0
+
+    Dim sortOrder(5) As String
+    sortOrder(1)="FALSE BREAK" : sortOrder(2)="APS ROUNDING"
+    sortOrder(3)="PRICE BREAK" : sortOrder(4)="TRUE BREAK"
+    sortOrder(5)="SINGLE-SIDED"
+
+    Dim so As Long
+    For so = 1 To 5
+        Dim oi As Long
+        For oi = 1 To oc
+            If oLabel(oi) <> sortOrder(so) Then GoTo NextOI
+            If oMembers(oi) = "" Then GoTo NextOI  ' already written
+            Call CountStat(oLabel(oi), cFB, cAPS, cPB, cTB, cSS)
+            Call WriteGroup(wsOut, outR, oLabel(oi), oNote(oi), _
+                            oGMI(oi), oProduct(oi), oDates(oi), oPrice(oi), _
+                            oNetQty(oi), oNetVal(oi), oMembers(oi), oSec(oi), rData)
+            oMembers(oi) = ""  ' mark as written
+NextOI:
+        Next oi
+    Next so
+
+    ' ── Stats ────────────────────────────────────────────────────
+    wsOut.Cells(4,1).Value  = "Total Rows:  " & rc
+    wsOut.Cells(4,3).Value  = "Break Groups:  " & (cFB+cAPS+cPB+cTB+cSS)
+    wsOut.Cells(4,5).Value  = "False Breaks:  " & cFB & _
+                               IIf(cAPS>0, " (+" & cAPS & " APS rounding)","")
+    wsOut.Cells(4,7).Value  = "Price Breaks:  " & cPB
+    wsOut.Cells(4,9).Value  = "True Breaks:  " & cTB
+    wsOut.Cells(4,11).Value = "Single-Sided:  " & cSS
+
+    With wsOut.Cells(4,1)  :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(0,0,0):End With
+    With wsOut.Cells(4,3)  :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(0,0,0):End With
+    With wsOut.Cells(4,5)  :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(55,86,35):.Interior.Color=RGB(226,239,218):End With
+    With wsOut.Cells(4,7)  :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(31,73,125):.Interior.Color=RGB(221,238,255):End With
+    With wsOut.Cells(4,9)  :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(132,60,12):.Interior.Color=RGB(252,228,214):End With
+    With wsOut.Cells(4,11) :.Font.Bold=True:.Font.Size=10:.Font.Name="Calibri":.Font.Color=RGB(89,89,89):.Interior.Color=RGB(237,237,237):End With
+
+    wsOut.Range("A6:N6").AutoFilter
+    wsOut.Activate
+    wsOut.Cells(7,1).Select
+
+    MsgBox "Done!" & Chr(10) & Chr(10) & _
+           rc & " rows processed" & Chr(10) & _
+           "False Breaks:  " & cFB & Chr(10) & _
+           "APS Rounding:  " & cAPS & Chr(10) & _
+           "Price Breaks:  " & cPB & Chr(10) & _
+           "True Breaks:   " & cTB & Chr(10) & _
+           "Single-Sided:  " & cSS, vbInformation, "Recon Complete"
+
+Cleanup:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+' ════════════════════════════════════════════════════════════════════
+' CLEAR RESULTS
+' ════════════════════════════════════════════════════════════════════
+Public Sub ClearResults()
+    Dim wsOut As Worksheet
+    Set wsOut = ThisWorkbook.Sheets("RESULTS")
+    With wsOut
+        If .AutoFilterMode Then .AutoFilterMode = False
+        .Range("A7:N3000").ClearContents
+        .Range("A7:N3000").Interior.ColorIndex = xlNone
+        .Range("A7:N3000").Borders.LineStyle = xlNone
+    End With
+    wsOut.Cells(4,1).Value="Total Rows:"    : wsOut.Cells(4,3).Value="Break Groups:"
+    wsOut.Cells(4,5).Value="False Breaks:"  : wsOut.Cells(4,7).Value="Price Breaks:"
+    wsOut.Cells(4,9).Value="True Breaks:"   : wsOut.Cells(4,11).Value="Single-Sided:"
+    MsgBox "Results cleared.", vbInformation, "Cleared"
+End Sub
