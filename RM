@@ -74,8 +74,6 @@ Private Sub GetColors(st As String, bgC As Long, fgC As Long, bdC As Long)
             bgC=RGB(221,238,255):fgC=RGB(31,73,125):bdC=RGB(46,117,182)
         Case "TRUE BREAK"
             bgC=RGB(252,228,214):fgC=RGB(132,60,12):bdC=RGB(192,80,77)
-        Case "PARTIAL MATCH"
-            bgC=RGB(255,242,204):fgC=RGB(127,96,0):bdC=RGB(197,158,0)
         Case Else
             bgC=RGB(237,237,237):fgC=RGB(89,89,89):bdC=RGB(128,128,128)
     End Select
@@ -140,10 +138,9 @@ Private Sub WriteGroup(wsOut As Worksheet, outR As Long, _
     For p = 0 To UBound(parts)
         If Trim(parts(p)) = "" Then GoTo NextP
         Dim ri As Long : ri = CLng(Trim(parts(p)))
-        Dim col As Long
-        For col = 1 To 12
-            wsOut.Cells(outR, col).Value = rData(ri, col)
-        Next col
+        For c = 1 To 12
+            wsOut.Cells(outR, c).Value = rData(ri, c)
+        Next c
         Dim existAct As String : existAct = Trim(rData(ri, 9))
         wsOut.Cells(outR,9).Value = IIf(existAct="", st, existAct & " | " & st)
         wsOut.Cells(outR,13).Value = rData(ri, 13)
@@ -158,15 +155,94 @@ DoneRows:
 End Sub
 
 Private Sub CountStat(st As String, cFB As Long, cAPS As Long, _
-                      cPB As Long, cTB As Long, cSS As Long, cPM As Long)
+                      cPB As Long, cTB As Long, cSS As Long)
     Select Case st
         Case "FALSE BREAK"  : cFB  = cFB  + 1
         Case "APS ROUNDING" : cAPS = cAPS + 1
         Case "PRICE BREAK"  : cPB  = cPB  + 1
         Case "TRUE BREAK"   : cTB  = cTB  + 1
         Case "SINGLE-SIDED" : cSS  = cSS  + 1
-        Case "PARTIAL MATCH": cPM  = cPM  + 1
     End Select
+End Sub
+
+' ── Greedy subset matching within a mixed group ───────────────────
+' Finds subsets of HO rows and DK rows that net to zero on qty AND value
+' Returns pipe-delimited matched member indices and updates rMatched array
+Private Sub MatchSubsets( _
+    hoIdx() As Long, hoCount As Long, _
+    dkIdx() As Long, dkCount As Long, _
+    rEffQty() As Double, rEffVal() As Double, rRawQty() As Double, rRawVal() As Double, _
+    rMatched() As Boolean, _
+    oLabel() As String, oNote() As String, oGMI() As String, oProd() As String, _
+    oDates() As String, oPrice() As Double, oNetQty() As Double, oNetVal() As Double, _
+    oMembers() As String, oSec() As String, oc As Long, MAXG As Long, _
+    gmi As String, prod As String, dt As String, px As Double, sec As String, _
+    cFB As Long, cAPS As Long, cPB As Long, cTB As Long, cSS As Long)
+
+    ' For each HO row, try to find DK rows whose abs qty sums to same abs qty
+    ' and whose values net to zero
+    Dim i As Long, j As Long
+    Dim hoUsed(500) As Boolean
+    Dim dkUsed(500) As Boolean
+
+    For i = 1 To hoCount
+        If hoUsed(i) Then GoTo NextHO
+        Dim hoAQ As Double : hoAQ = Abs(rRawQty(hoIdx(i)))
+        Dim hoAV As Double : hoAV = rRawVal(hoIdx(i))
+
+        ' Try to find DK rows summing to same qty with matching value
+        Dim dkSumQ As Double : dkSumQ = 0
+        Dim dkSumV As Double : dkSumV = 0
+        Dim matchList As String : matchList = ""
+        Dim matchCount As Long : matchCount = 0
+
+        ' Greedy: accumulate DK rows until qty matches
+        For j = 1 To dkCount
+            If dkUsed(j) Then GoTo NextDK
+            If dkSumQ >= hoAQ - 0.001 Then GoTo NextDK  ' already reached target
+            dkSumQ = dkSumQ + Abs(rRawQty(dkIdx(j)))
+            dkSumV = dkSumV + rRawVal(dkIdx(j))
+            matchList = IIf(matchList="", CStr(dkIdx(j)), matchList & "|" & CStr(dkIdx(j)))
+            matchCount = matchCount + 1
+NextDK:
+        Next j
+
+        ' Check if qty matches and value nets to zero
+        If Abs(dkSumQ - hoAQ) < 0.001 And Abs(hoAV - dkSumV) < 0.01 Then
+            ' Match found — mark as FALSE BREAK
+            If oc < MAXG Then
+                oc = oc + 1
+                oLabel(oc) = "FALSE BREAK"
+                oNote(oc)  = "Net qty = 0, net value = 0. Matched sub-group within mixed group."
+                oGMI(oc)   = gmi : oProd(oc) = prod : oDates(oc) = dt
+                oPrice(oc) = px  : oNetQty(oc) = 0 : oNetVal(oc) = 0
+                oSec(oc)   = sec
+                oMembers(oc) = CStr(hoIdx(i)) & "|" & matchList
+                cFB = cFB + 1
+
+                ' Mark all as used and matched
+                hoUsed(i) = True
+                rMatched(hoIdx(i)) = True
+                Dim mParts() As String : mParts = Split(matchList, "|")
+                Dim mp As Long
+                For mp = 0 To UBound(mParts)
+                    If Trim(mParts(mp)) <> "" Then
+                        Dim mIdx As Long : mIdx = CLng(Trim(mParts(mp)))
+                        rMatched(mIdx) = True
+                        ' Mark dk as used
+                        Dim jj As Long
+                        For jj = 1 To dkCount
+                            If dkIdx(jj) = mIdx Then dkUsed(jj) = True : Exit For
+                        Next jj
+                    End If
+                Next mp
+            End If
+        Else
+            ' No match for this HO row — reset and try next
+            ' (DK rows not consumed since no match was found)
+        End If
+NextHO:
+    Next i
 End Sub
 
 ' ════════════════════════════════════════════════════════════════════
@@ -193,10 +269,11 @@ Public Sub RunRecon()
     Dim rData(MAXR, 13)  As String
     Dim rEffQty(MAXR)    As Double
     Dim rEffVal(MAXR)    As Double
-    Dim rRawQty(MAXR)    As Double   ' original signed qty (not flipped)
-    Dim rRawVal(MAXR)    As Double   ' original value (not flipped)
+    Dim rRawQty(MAXR)    As Double
+    Dim rRawVal(MAXR)    As Double
     Dim rIntPxKey(MAXR)  As String
     Dim rResolved(MAXR)  As Boolean
+    Dim rMatched(MAXR)   As Boolean
     Dim rc As Long : rc = 0
     Dim curSec As String : curSec = ""
 
@@ -226,14 +303,13 @@ Public Sub RunRecon()
         Dim ho As Boolean : ho = IsHO(rData(rc, 6))
         Dim q As Double : q = SafeDbl(rData(rc, 3))
         Dim v As Double : v = SafeDbl(rData(rc, 12))
-        rRawQty(rc) = q
-        rRawVal(rc) = v
-        ' HO = cancel: flip both qty and value
+        rRawQty(rc) = q : rRawVal(rc) = v
         If ho Then q = -q : v = -v
         rEffQty(rc)   = q
         rEffVal(rc)   = v
         rIntPxKey(rc) = IntPriceKey(SafeDbl(rData(rc, 5)))
         rResolved(rc) = False
+        rMatched(rc)  = False
 NextRIn:
     Next i
 
@@ -245,7 +321,7 @@ NextRIn:
     ' ════════════════════════════════════════════════════════════
     ' OUTPUT STORE
     ' ════════════════════════════════════════════════════════════
-    Const MAXG As Long = 3000
+    Const MAXG As Long = 5000
     Dim oLabel(MAXG)   As String
     Dim oNote(MAXG)    As String
     Dim oGMI(MAXG)     As String
@@ -258,13 +334,11 @@ NextRIn:
     Dim oSec(MAXG)     As String
     Dim oc As Long : oc = 0
 
+    Dim cFB As Long, cAPS As Long, cPB As Long, cTB As Long, cSS As Long
+    cFB=0:cAPS=0:cPB=0:cTB=0:cSS=0
+
     ' ════════════════════════════════════════════════════════════
     ' PASS 1 — GMI + Product + Date
-    ' Within each group: separate HO and DK sides
-    ' If abs(total HO qty) = abs(total DK qty) AND net value = 0 → FALSE BREAK
-    ' If qty matches but value off ≤ $20 → APS ROUNDING
-    ' If qty matches but value off > $20 → PRICE BREAK
-    ' If qty does NOT match → PARTIAL MATCH (needs human review)
     ' ════════════════════════════════════════════════════════════
     Const MAXG1 As Long = 3000
     Dim g1Key(MAXG1)     As String
@@ -274,12 +348,10 @@ NextRIn:
     Dim g1MinPx(MAXG1)   As Double
     Dim g1MaxPx(MAXG1)   As Double
     Dim g1PxList(MAXG1)  As String
-    Dim g1NetQ(MAXG1)    As Double   ' net of all rows (HO flipped)
-    Dim g1NetV(MAXG1)    As Double   ' net of all values (HO flipped)
-    Dim g1HOQty(MAXG1)   As Double   ' total abs HO qty
-    Dim g1DKQty(MAXG1)   As Double   ' total abs DK qty
-    Dim g1HOVal(MAXG1)   As Double   ' total HO value (raw positive)
-    Dim g1DKVal(MAXG1)   As Double   ' total DK value (raw positive)
+    Dim g1NetQ(MAXG1)    As Double
+    Dim g1NetV(MAXG1)    As Double
+    Dim g1HOQty(MAXG1)   As Double
+    Dim g1DKQty(MAXG1)   As Double
     Dim g1Rows(MAXG1)    As Long
     Dim g1HasHO(MAXG1)   As Boolean
     Dim g1HasDK(MAXG1)   As Boolean
@@ -300,20 +372,16 @@ NextRIn:
             If gc1 >= MAXG1 Then GoTo NextRP1
             gc1 = gc1 + 1 : gi1 = gc1
             g1Key(gi1)    = k1
-            g1GMI(gi1)    = rData(r,1)
-            g1Prod(gi1)   = rData(r,4)
+            g1GMI(gi1)    = rData(r,1) : g1Prod(gi1) = rData(r,4)
             g1Date(gi1)   = rData(r,2)
-            g1MinPx(gi1)  = SafeDbl(rData(r,5))
-            g1MaxPx(gi1)  = SafeDbl(rData(r,5))
+            g1MinPx(gi1)  = SafeDbl(rData(r,5)) : g1MaxPx(gi1) = SafeDbl(rData(r,5))
             g1PxList(gi1) = PriceKey(SafeDbl(rData(r,5)))
             g1NetQ(gi1)   = 0 : g1NetV(gi1) = 0
             g1HOQty(gi1)  = 0 : g1DKQty(gi1) = 0
-            g1HOVal(gi1)  = 0 : g1DKVal(gi1) = 0
             g1Rows(gi1)   = 0
             g1HasHO(gi1)  = False : g1HasDK(gi1) = False
             g1Mem(gi1)    = "" : g1Sec(gi1) = ""
         End If
-
         Dim rp As Double : rp = SafeDbl(rData(r,5))
         If rp < g1MinPx(gi1) Then g1MinPx(gi1) = rp
         If rp > g1MaxPx(gi1) Then g1MaxPx(gi1) = rp
@@ -321,22 +389,16 @@ NextRIn:
         If InStr(g1PxList(gi1), pkey) = 0 Then
             g1PxList(gi1) = g1PxList(gi1) & " | " & pkey
         End If
-
         g1NetQ(gi1) = g1NetQ(gi1) + rEffQty(r)
         g1NetV(gi1) = g1NetV(gi1) + rEffVal(r)
         g1Rows(gi1) = g1Rows(gi1) + 1
-
-        ' Track HO and DK sides separately using raw abs values
         If IsHO(rData(r,6)) Then
             g1HasHO(gi1) = True
             g1HOQty(gi1) = g1HOQty(gi1) + Abs(rRawQty(r))
-            g1HOVal(gi1) = g1HOVal(gi1) + rRawVal(r)
         Else
             g1HasDK(gi1) = True
             g1DKQty(gi1) = g1DKQty(gi1) + Abs(rRawQty(r))
-            g1DKVal(gi1) = g1DKVal(gi1) + rRawVal(r)
         End If
-
         g1Mem(gi1) = IIf(g1Mem(gi1)="", CStr(r), g1Mem(gi1) & "|" & CStr(r))
         If rData(r,13)<>"" And InStr(g1Sec(gi1),rData(r,13))=0 Then
             g1Sec(gi1) = IIf(g1Sec(gi1)="", rData(r,13), g1Sec(gi1) & " | " & rData(r,13))
@@ -344,70 +406,211 @@ NextRIn:
 NextRP1:
     Next r
 
-    ' ── Classify Pass 1 groups ───────────────────────────────────
+    ' Classify pass 1
     For g = 1 To gc1
         If g1Rows(g) < 2 Then GoTo SkipP1
-        If Not g1HasHO(g) Or Not g1HasDK(g) Then GoTo SkipP1  ' only one side present
+        If Not g1HasHO(g) Or Not g1HasDK(g) Then GoTo SkipP1
 
-        Dim qtyMatch As Boolean
-        qtyMatch = (Abs(g1HOQty(g) - g1DKQty(g)) < 0.001)
-
-        Dim netVal1 As Double : netVal1 = g1NetV(g)  ' net after HO flip
+        Dim qtyMatch1 As Boolean
+        qtyMatch1 = (Abs(g1HOQty(g) - g1DKQty(g)) < 0.001)
+        Dim netVal1 As Double : netVal1 = g1NetV(g)
         Dim netQty1 As Double : netQty1 = g1NetQ(g)
-
-        Dim st1 As String : Dim n1 As String
         Dim multiPx1 As Boolean : multiPx1 = (Abs(g1MaxPx(g)-g1MinPx(g)) > 0.00001)
         Dim multiSec1 As Boolean : multiSec1 = (InStr(g1Sec(g),"|")>0)
+        Dim st1 As String : Dim n1 As String
 
-        If qtyMatch Then
-            ' HO qty = DK qty — these sides fully offset each other on qty
+        If qtyMatch1 Then
             If Abs(netVal1) < 0.01 Then
                 st1 = "FALSE BREAK"
                 n1 = "HO qty = DK qty, net value = 0. Fully cancels."
                 If multiPx1 Then n1 = n1 & " | Prices: " & g1PxList(g)
-                If multiSec1 Then n1 = n1 & " | CUST/HOUSE transfer: " & g1Sec(g)
+                If multiSec1 Then n1 = n1 & " | CUST/HOUSE: " & g1Sec(g)
             ElseIf Abs(netVal1) <= APS_THRESHOLD Then
                 st1 = "APS ROUNDING"
                 n1 = "HO qty = DK qty. Value diff " & Format(netVal1,"+#,##0.00;-#,##0.00") & " within $20 APS rounding."
-                If multiPx1 Then n1 = n1 & " | Prices: " & g1PxList(g)
             Else
                 st1 = "PRICE BREAK"
                 n1 = "HO qty = DK qty but cash does not net: " & Format(netVal1,"+#,##0.00;-#,##0.00") & "."
                 If multiPx1 Then
-                    n1 = n1 & " Price range: " & Format(g1MinPx(g),"0.0000") & " - " & Format(g1MaxPx(g),"0.0000") & ". Needs review."
-                Else
-                    n1 = n1 & " Price correction."
+                    n1 = n1 & " Price range: " & Format(g1MinPx(g),"0.0000") & " - " & Format(g1MaxPx(g),"0.0000") & "."
                 End If
             End If
+
+            If oc >= MAXG Then GoTo SkipP1
+            oc = oc + 1
+            oLabel(oc)=st1:oNote(oc)=n1:oGMI(oc)=g1GMI(g):oProd(oc)=g1Prod(g)
+            oDates(oc)=g1Date(g):oPrice(oc)=g1MinPx(g):oNetQty(oc)=netQty1
+            oNetVal(oc)=netVal1:oMembers(oc)=g1Mem(g):oSec(oc)=g1Sec(g)
+            Call CountStat(st1,cFB,cAPS,cPB,cTB,cSS)
+
+            Dim pts1() As String : pts1 = Split(g1Mem(g), "|")
+            Dim p As Long
+            For p = 0 To UBound(pts1)
+                If pts1(p)<>"" Then rResolved(CLng(pts1(p))) = True
+            Next p
+            g1Mem(g) = ""
+
         Else
-            ' Qty sides don't match — partial situation, flag for review
-            st1 = "PARTIAL MATCH"
-            n1 = "HO qty=" & Format(g1HOQty(g),"0.###") & _
-                 " DK qty=" & Format(g1DKQty(g),"0.###") & _
-                 " Net qty=" & Format(netQty1,"+0.###;-0.###") & _
-                 " Net val=" & Format(netVal1,"+#,##0.00;-#,##0.00") & _
-                 ". Mixed group — needs human review."
-            If multiPx1 Then n1 = n1 & " | Prices: " & g1PxList(g)
+            ' ── MIXED GROUP: try greedy subset matching ───────────
+            ' Separate into HO and DK arrays
+            Dim hoIdx(500) As Long, hoCount As Long : hoCount = 0
+            Dim dkIdx(500) As Long, dkCount As Long : dkCount = 0
+            Dim mPts() As String : mPts = Split(g1Mem(g), "|")
+            Dim mp As Long
+            For mp = 0 To UBound(mPts)
+                If Trim(mPts(mp)) = "" Then GoTo NextMP
+                Dim mR As Long : mR = CLng(Trim(mPts(mp)))
+                If IsHO(rData(mR,6)) Then
+                    hoCount = hoCount + 1
+                    hoIdx(hoCount) = mR
+                Else
+                    dkCount = dkCount + 1
+                    dkIdx(dkCount) = mR
+                End If
+NextMP:
+            Next mp
+
+            ' Sort HO by abs qty descending (bubble sort)
+            Dim si As Long, sj As Long, stmp As Long
+            For si = 1 To hoCount - 1
+                For sj = 1 To hoCount - si
+                    If Abs(rRawQty(hoIdx(sj))) < Abs(rRawQty(hoIdx(sj+1))) Then
+                        stmp = hoIdx(sj) : hoIdx(sj) = hoIdx(sj+1) : hoIdx(sj+1) = stmp
+                    End If
+                Next sj
+            Next si
+
+            ' Sort DK by abs qty descending
+            For si = 1 To dkCount - 1
+                For sj = 1 To dkCount - si
+                    If Abs(rRawQty(dkIdx(sj))) < Abs(rRawQty(dkIdx(sj+1))) Then
+                        stmp = dkIdx(sj) : dkIdx(sj) = dkIdx(sj+1) : dkIdx(sj+1) = stmp
+                    End If
+                Next sj
+            Next si
+
+            ' Greedy matching: for each HO, find DK subset with matching qty AND value=0
+            Dim hoUsed(500) As Boolean
+            Dim dkUsed(500) As Boolean
+            Dim hi As Long, di As Long
+
+            For hi = 1 To hoCount
+                If hoUsed(hi) Then GoTo NextHI
+                Dim hoAbsQ As Double : hoAbsQ = Abs(rRawQty(hoIdx(hi)))
+                Dim hoAbsV As Double : hoAbsV = rRawVal(hoIdx(hi))
+
+                Dim dkSumQ As Double : dkSumQ = 0
+                Dim dkSumV As Double : dkSumV = 0
+                Dim matchMem As String : matchMem = ""
+                Dim dkTmpUsed(500) As Boolean
+
+                ' Accumulate DK rows up to the HO qty target
+                For di = 1 To dkCount
+                    If dkUsed(di) Then GoTo NextDI
+                    If dkSumQ >= hoAbsQ - 0.001 Then GoTo NextDI
+                    dkSumQ = dkSumQ + Abs(rRawQty(dkIdx(di)))
+                    dkSumV = dkSumV + rRawVal(dkIdx(di))
+                    matchMem = IIf(matchMem="", CStr(dkIdx(di)), matchMem & "|" & CStr(dkIdx(di)))
+                    dkTmpUsed(di) = True
+NextDI:
+                Next di
+
+                ' Check qty matches and value exactly nets to zero
+                If Abs(dkSumQ - hoAbsQ) < 0.001 And Abs(hoAbsV - dkSumV) < 0.01 Then
+                    ' Match — write as FALSE BREAK
+                    If oc < MAXG Then
+                        oc = oc + 1
+                        oLabel(oc) = "FALSE BREAK"
+                        oNote(oc)  = "Net qty = 0, net value = 0. Matched within mixed group."
+                        If multiSec1 Then oNote(oc) = oNote(oc) & " | CUST/HOUSE: " & g1Sec(g)
+                        oGMI(oc)   = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
+                        oPrice(oc) = g1MinPx(g) : oNetQty(oc) = 0 : oNetVal(oc) = 0
+                        oSec(oc)   = g1Sec(g)
+                        oMembers(oc) = CStr(hoIdx(hi)) & "|" & matchMem
+                        cFB = cFB + 1
+                        hoUsed(hi) = True
+                        rResolved(hoIdx(hi)) = True
+                        rMatched(hoIdx(hi)) = True
+                        For di = 1 To dkCount
+                            If dkTmpUsed(di) Then
+                                dkUsed(di) = True
+                                rResolved(dkIdx(di)) = True
+                                rMatched(dkIdx(di)) = True
+                            End If
+                        Next di
+                    End If
+                End If
+NextHI:
+            Next hi
+
+            ' Remaining unmatched rows in this group → TRUE BREAK
+            Dim remMem As String : remMem = ""
+            Dim remNetQ As Double : remNetQ = 0
+            Dim remNetV As Double : remNetV = 0
+            Dim remHasHO As Boolean : remHasHO = False
+            Dim remHasDK As Boolean : remHasDK = False
+
+            For hi = 1 To hoCount
+                If Not hoUsed(hi) Then
+                    remMem = IIf(remMem="", CStr(hoIdx(hi)), remMem & "|" & CStr(hoIdx(hi)))
+                    remNetQ = remNetQ + rEffQty(hoIdx(hi))
+                    remNetV = remNetV + rEffVal(hoIdx(hi))
+                    remHasHO = True
+                End If
+            Next hi
+            For di = 1 To dkCount
+                If Not dkUsed(di) Then
+                    remMem = IIf(remMem="", CStr(dkIdx(di)), remMem & "|" & CStr(dkIdx(di)))
+                    remNetQ = remNetQ + rEffQty(dkIdx(di))
+                    remNetV = remNetV + rEffVal(dkIdx(di))
+                    remHasDK = True
+                End If
+            Next di
+
+            If remMem <> "" Then
+                ' Check if remainder nets to zero (could be a price break)
+                Dim remSt As String : Dim remN As String
+                If Abs(remNetQ) < 0.001 Then
+                    If Abs(remNetV) < 0.01 Then
+                        remSt = "FALSE BREAK"
+                        remN = "Remaining rows net to zero after sub-group matching."
+                    ElseIf Abs(remNetV) <= APS_THRESHOLD Then
+                        remSt = "APS ROUNDING"
+                        remN = "Remaining rows: qty=0, value diff " & Format(remNetV,"+#,##0.00;-#,##0.00") & " APS rounding."
+                    Else
+                        remSt = "PRICE BREAK"
+                        remN = "Remaining rows: qty=0 but cash does not net: " & Format(remNetV,"+#,##0.00;-#,##0.00") & "."
+                    End If
+                Else
+                    remSt = "TRUE BREAK"
+                    remN = "Open qty: " & Format(remNetQ,"+0.###;-0.###")
+                    If Abs(remNetV) >= 0.01 Then remN = remN & " | Net value: " & Format(remNetV,"+#,##0.00;-#,##0.00")
+                    If Not remHasHO Then remN = remN & " | No H/O side."
+                    If Not remHasDK Then remN = remN & " | No DK side."
+                End If
+
+                If oc < MAXG Then
+                    oc = oc + 1
+                    oLabel(oc)=remSt:oNote(oc)=remN:oGMI(oc)=g1GMI(g):oProd(oc)=g1Prod(g)
+                    oDates(oc)=g1Date(g):oPrice(oc)=g1MinPx(g):oNetQty(oc)=remNetQ
+                    oNetVal(oc)=remNetV:oMembers(oc)=remMem:oSec(oc)=g1Sec(g)
+                    Call CountStat(remSt,cFB,cAPS,cPB,cTB,cSS)
+                End If
+
+                ' Mark remainder as resolved (handled by true/price break output)
+                Dim rPts() As String : rPts = Split(remMem, "|")
+                For p = 0 To UBound(rPts)
+                    If rPts(p)<>"" Then rResolved(CLng(rPts(p))) = True
+                Next p
+            End If
+
+            g1Mem(g) = ""
         End If
-
-        If oc >= MAXG Then GoTo SkipP1
-        oc = oc + 1
-        oLabel(oc) = st1 : oNote(oc) = n1
-        oGMI(oc) = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
-        oPrice(oc) = g1MinPx(g) : oNetQty(oc) = netQty1 : oNetVal(oc) = netVal1
-        oMembers(oc) = g1Mem(g) : oSec(oc) = g1Sec(g)
-
-        Dim pts1() As String : pts1 = Split(g1Mem(g), "|")
-        Dim p As Long
-        For p = 0 To UBound(pts1)
-            If pts1(p)<>"" Then rResolved(CLng(pts1(p))) = True
-        Next p
-        g1Mem(g) = ""
 SkipP1:
     Next g
 
     ' ════════════════════════════════════════════════════════════
-    ' PASS 2 — GMI + Product + IntPrice (multi-date, unresolved)
+    ' PASS 2 — GMI + Product + IntPrice (multi-date)
     ' ════════════════════════════════════════════════════════════
     Const MAXG2 As Long = 3000
     Dim g2Key(MAXG2)    As String
@@ -448,9 +651,11 @@ SkipP1:
         g2NetV(gi2) = g2NetV(gi2) + rEffVal(r)
         g2Rows(gi2) = g2Rows(gi2) + 1
         If IsHO(rData(r,6)) Then
-            g2HasHO(gi2) = True : g2HOQty(gi2) = g2HOQty(gi2) + Abs(rRawQty(r))
+            g2HasHO(gi2) = True
+            g2HOQty(gi2) = g2HOQty(gi2) + Abs(rRawQty(r))
         Else
-            g2HasDK(gi2) = True : g2DKQty(gi2) = g2DKQty(gi2) + Abs(rRawQty(r))
+            g2HasDK(gi2) = True
+            g2DKQty(gi2) = g2DKQty(gi2) + Abs(rRawQty(r))
         End If
         g2Mem(gi2) = IIf(g2Mem(gi2)="", CStr(r), g2Mem(gi2) & "|" & CStr(r))
         If rData(r,2)<>"" And InStr(g2Dates(gi2),rData(r,2))=0 Then
@@ -465,7 +670,6 @@ NextRP2:
     For g = 1 To gc2
         If g2Rows(g) < 2 Then GoTo SkipP2
         If Not g2HasHO(g) Or Not g2HasDK(g) Then GoTo SkipP2
-
         Dim qtyMatch2 As Boolean
         qtyMatch2 = (Abs(g2HOQty(g) - g2DKQty(g)) < 0.001)
         Dim netVal2 As Double : netVal2 = g2NetV(g)
@@ -475,8 +679,8 @@ NextRP2:
         If qtyMatch2 Then
             If Abs(netVal2) < 0.01 Then
                 st2 = "FALSE BREAK"
-                n2 = "HO qty = DK qty, net value = 0. Multi-date / T+2 match. Dates: " & g2Dates(g)
-                If multiSec2 Then n2 = n2 & " | CUST/HOUSE transfer: " & g2Sec(g)
+                n2 = "HO qty = DK qty, net value = 0. Multi-date / T+2. Dates: " & g2Dates(g)
+                If multiSec2 Then n2 = n2 & " | CUST/HOUSE: " & g2Sec(g)
             ElseIf Abs(netVal2) <= APS_THRESHOLD Then
                 st2 = "APS ROUNDING"
                 n2 = "HO qty = DK qty. Value diff " & Format(netVal2,"+#,##0.00;-#,##0.00") & " within $20. Dates: " & g2Dates(g)
@@ -485,23 +689,26 @@ NextRP2:
                 n2 = "HO qty = DK qty but cash does not net: " & Format(netVal2,"+#,##0.00;-#,##0.00") & ". Dates: " & g2Dates(g)
             End If
         Else
-            st2 = "PARTIAL MATCH"
-            n2 = "HO qty=" & Format(g2HOQty(g),"0.###") & " DK qty=" & Format(g2DKQty(g),"0.###") & _
-                 " Net qty=" & Format(g2NetQ(g),"+0.###;-0.###") & _
-                 " Net val=" & Format(netVal2,"+#,##0.00;-#,##0.00") & ". Dates: " & g2Dates(g)
+            st2 = "TRUE BREAK"
+            n2 = "Open qty: " & Format(g2NetQ(g),"+0.###;-0.###")
+            If Abs(netVal2) >= 0.01 Then n2 = n2 & " | Net value: " & Format(netVal2,"+#,##0.00;-#,##0.00")
+            If Not g2HasHO(g) Then n2 = n2 & " | No H/O side."
+            If Not g2HasDK(g) Then n2 = n2 & " | No DK side."
+            n2 = n2 & " | Dates: " & g2Dates(g)
         End If
 
         If oc >= MAXG Then GoTo SkipP2
         oc = oc + 1
-        oLabel(oc) = st2 : oNote(oc) = n2
-        oGMI(oc) = g2GMI(g) : oProd(oc) = g2Prod(g) : oDates(oc) = g2Dates(g)
-        oPrice(oc) = g2Price(g) : oNetQty(oc) = g2NetQ(g) : oNetVal(oc) = netVal2
-        oMembers(oc) = g2Mem(g) : oSec(oc) = g2Sec(g)
+        oLabel(oc)=st2:oNote(oc)=n2:oGMI(oc)=g2GMI(g):oProd(oc)=g2Prod(g)
+        oDates(oc)=g2Dates(g):oPrice(oc)=g2Price(g):oNetQty(oc)=g2NetQ(g)
+        oNetVal(oc)=netVal2:oMembers(oc)=g2Mem(g):oSec(oc)=g2Sec(g)
+        Call CountStat(st2,cFB,cAPS,cPB,cTB,cSS)
 
         Dim pts2() As String : pts2 = Split(g2Mem(g), "|")
-        For p = 0 To UBound(pts2)
-            If pts2(p)<>"" Then rResolved(CLng(pts2(p))) = True
-        Next p
+        Dim p2 As Long
+        For p2 = 0 To UBound(pts2)
+            If pts2(p2)<>"" Then rResolved(CLng(pts2(p2))) = True
+        Next p2
         g2Mem(g) = ""
 SkipP2:
     Next g
@@ -548,9 +755,11 @@ SkipP2:
         g3NetV(gi3) = g3NetV(gi3) + rEffVal(r)
         g3Rows(gi3) = g3Rows(gi3) + 1
         If IsHO(rData(r,6)) Then
-            g3HasHO(gi3) = True : g3HOQty(gi3) = g3HOQty(gi3) + Abs(rRawQty(r))
+            g3HasHO(gi3) = True
+            g3HOQty(gi3) = g3HOQty(gi3) + Abs(rRawQty(r))
         Else
-            g3HasDK(gi3) = True : g3DKQty(gi3) = g3DKQty(gi3) + Abs(rRawQty(r))
+            g3HasDK(gi3) = True
+            g3DKQty(gi3) = g3DKQty(gi3) + Abs(rRawQty(r))
         End If
         g3Mem(gi3) = IIf(g3Mem(gi3)="", CStr(r), g3Mem(gi3) & "|" & CStr(r))
         If rData(r,1)<>"" And InStr(g3GMIs(gi3),rData(r,1))=0 Then
@@ -568,7 +777,6 @@ NextRP3:
     For g = 1 To gc3
         If g3Rows(g) < 2 Then GoTo SkipP3
         If Not g3HasHO(g) Or Not g3HasDK(g) Then GoTo SkipP3
-
         Dim qtyMatch3 As Boolean
         qtyMatch3 = (Abs(g3HOQty(g) - g3DKQty(g)) < 0.001)
         Dim netVal3 As Double : netVal3 = g3NetV(g)
@@ -591,23 +799,24 @@ NextRP3:
                 n3 = "HO qty = DK qty but cash does not net: " & Format(netVal3,"+#,##0.00;-#,##0.00") & "."
             End If
         Else
-            st3 = "PARTIAL MATCH"
-            n3 = "HO qty=" & Format(g3HOQty(g),"0.###") & " DK qty=" & Format(g3DKQty(g),"0.###") & _
-                 " Net=" & Format(g3NetQ(g),"+0.###;-0.###") & ". Cross-section. Needs review."
-            If multiSec3 Then n3 = n3 & " Sections: " & g3Sec(g)
+            st3 = "TRUE BREAK"
+            n3 = "Open qty: " & Format(g3NetQ(g),"+0.###;-0.###")
+            If Abs(netVal3) >= 0.01 Then n3 = n3 & " | Net value: " & Format(netVal3,"+#,##0.00;-#,##0.00")
+            If multiSec3 Or crossGMI3 Then n3 = n3 & " | Cross-section: " & g3Sec(g)
         End If
 
         If oc >= MAXG Then GoTo SkipP3
         oc = oc + 1
-        oLabel(oc) = st3 : oNote(oc) = n3
-        oGMI(oc) = g3GMIs(g) : oProd(oc) = g3Prod(g) : oDates(oc) = g3Dates(g)
-        oPrice(oc) = g3Price(g) : oNetQty(oc) = g3NetQ(g) : oNetVal(oc) = netVal3
-        oMembers(oc) = g3Mem(g) : oSec(oc) = g3Sec(g)
+        oLabel(oc)=st3:oNote(oc)=n3:oGMI(oc)=g3GMIs(g):oProd(oc)=g3Prod(g)
+        oDates(oc)=g3Dates(g):oPrice(oc)=g3Price(g):oNetQty(oc)=g3NetQ(g)
+        oNetVal(oc)=netVal3:oMembers(oc)=g3Mem(g):oSec(oc)=g3Sec(g)
+        Call CountStat(st3,cFB,cAPS,cPB,cTB,cSS)
 
         Dim pts3() As String : pts3 = Split(g3Mem(g), "|")
-        For p = 0 To UBound(pts3)
-            If pts3(p)<>"" Then rResolved(CLng(pts3(p))) = True
-        Next p
+        Dim p3 As Long
+        For p3 = 0 To UBound(pts3)
+            If pts3(p3)<>"" Then rResolved(CLng(pts3(p3))) = True
+        Next p3
         g3Mem(g) = ""
 SkipP3:
     Next g
@@ -677,10 +886,10 @@ NextRP4:
         Else
             n4 = "Single row — nothing to net against."
         End If
-        oLabel(oc) = st4 : oNote(oc) = n4
-        oGMI(oc) = g4GMI(g) : oProd(oc) = g4Prod(g) : oDates(oc) = g4Dates(g)
-        oPrice(oc) = g4Price(g) : oNetQty(oc) = g4NetQ(g) : oNetVal(oc) = g4NetV(g)
-        oMembers(oc) = g4Mem(g) : oSec(oc) = g4Sec(g)
+        oLabel(oc)=st4:oNote(oc)=n4:oGMI(oc)=g4GMI(g):oProd(oc)=g4Prod(g)
+        oDates(oc)=g4Dates(g):oPrice(oc)=g4Price(g):oNetQty(oc)=g4NetQ(g)
+        oNetVal(oc)=g4NetV(g):oMembers(oc)=g4Mem(g):oSec(oc)=g4Sec(g)
+        Call CountStat(st4,cFB,cAPS,cPB,cTB,cSS)
 SkipP4:
     Next g
 
@@ -695,21 +904,17 @@ SkipP4:
     End With
 
     Dim outR As Long : outR = 7
-    Dim cFB As Long, cAPS As Long, cPB As Long, cTB As Long, cSS As Long, cPM As Long
-    cFB=0:cAPS=0:cPB=0:cTB=0:cSS=0:cPM=0
 
-    Dim sortOrder(6) As String
+    Dim sortOrder(5) As String
     sortOrder(1)="FALSE BREAK":sortOrder(2)="APS ROUNDING"
-    sortOrder(3)="PRICE BREAK":sortOrder(4)="PARTIAL MATCH"
-    sortOrder(5)="TRUE BREAK":sortOrder(6)="SINGLE-SIDED"
+    sortOrder(3)="PRICE BREAK":sortOrder(4)="TRUE BREAK":sortOrder(5)="SINGLE-SIDED"
 
     Dim so As Long
-    For so = 1 To 6
+    For so = 1 To 5
         Dim oi As Long
         For oi = 1 To oc
             If oLabel(oi)<>sortOrder(so) Then GoTo NextOI
             If oMembers(oi)="" Then GoTo NextOI
-            Call CountStat(oLabel(oi),cFB,cAPS,cPB,cTB,cSS,cPM)
             Call WriteGroup(wsOut, outR, oLabel(oi), oNote(oi), _
                             oGMI(oi), oProd(oi), oDates(oi), oPrice(oi), _
                             oNetQty(oi), oNetVal(oi), oMembers(oi), oSec(oi), rData)
@@ -720,9 +925,9 @@ NextOI:
 
     ' ── Stats ────────────────────────────────────────────────────
     wsOut.Cells(4,1).Value  = "Total Rows:  " & rc
-    wsOut.Cells(4,3).Value  = "Break Groups:  " & (cFB+cAPS+cPB+cTB+cSS+cPM)
+    wsOut.Cells(4,3).Value  = "Break Groups:  " & (cFB+cAPS+cPB+cTB+cSS)
     wsOut.Cells(4,5).Value  = "False Breaks:  " & cFB & IIf(cAPS>0," (+" & cAPS & " APS)","")
-    wsOut.Cells(4,7).Value  = "Price Breaks:  " & cPB & IIf(cPM>0," (+" & cPM & " partial)","")
+    wsOut.Cells(4,7).Value  = "Price Breaks:  " & cPB
     wsOut.Cells(4,9).Value  = "True Breaks:  " & cTB
     wsOut.Cells(4,11).Value = "Single-Sided:  " & cSS
 
@@ -742,7 +947,6 @@ NextOI:
            "False Breaks:   " & cFB & Chr(10) & _
            "APS Rounding:   " & cAPS & Chr(10) & _
            "Price Breaks:   " & cPB & Chr(10) & _
-           "Partial Match:  " & cPM & Chr(10) & _
            "True Breaks:    " & cTB & Chr(10) & _
            "Single-Sided:   " & cSS, vbInformation, "Recon Complete"
 
