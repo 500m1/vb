@@ -35,7 +35,6 @@ Private Function PriceKey(p As Double) As String
 End Function
 
 Private Function IntPriceKey(p As Double) As String
-    ' Groups by integer part of price — e.g. 120.09 and 120.50 both = "120"
     IntPriceKey = CStr(CLng(Int(Abs(p))))
 End Function
 
@@ -195,7 +194,6 @@ Public Sub RunRecon()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
 
-    ' ── 1. Find last row ─────────────────────────────────────────
     Dim lastRow As Long
     lastRow = wsIn.Cells(wsIn.Rows.Count, 1).End(xlUp).Row
     If lastRow < 6 Then
@@ -203,12 +201,13 @@ Public Sub RunRecon()
         GoTo Cleanup
     End If
 
-    ' ── 2. Read rows ─────────────────────────────────────────────
+    ' ── Read rows ────────────────────────────────────────────────
     Const MAXR As Long = 5000
     Dim rData(MAXR, 13)  As String
     Dim rEffQty(MAXR)    As Double
     Dim rEffVal(MAXR)    As Double
-    Dim rPriceKey(MAXR)  As String   ' pre-computed rounded price key
+    Dim rPriceKey(MAXR)  As String
+    Dim rIntPxKey(MAXR)  As String
     Dim rResolved(MAXR)  As Boolean
     Dim rc As Long : rc = 0
     Dim curSec As String : curSec = ""
@@ -221,10 +220,10 @@ Public Sub RunRecon()
         If gv = "" Then GoTo NextRIn
         If rc >= MAXR Then GoTo NextRIn
         rc = rc + 1
+
         Dim col As Long
         For col = 1 To 12
             If col = 2 Then
-                ' Date column — force consistent string format
                 If IsDate(wsIn.Cells(i, col).Value) Then
                     rData(rc, col) = Format(CDate(wsIn.Cells(i, col).Value), "m/d/yyyy")
                 Else
@@ -236,26 +235,29 @@ Public Sub RunRecon()
         Next col
         rData(rc, 13) = curSec
 
-        ' ── Diagnostic for first 2 rows ──────────────────────────
-        If rc = 1 Or rc = 2 Then
+        ' ── Diagnostic: first 5 rows ─────────────────────────────
+        If rc <= 5 Then
             MsgBox "Row " & rc & Chr(10) & _
-                   "GMI: " & rData(rc,1) & Chr(10) & _
-                   "HODK: [" & rData(rc,6) & "]" & Chr(10) & _
-                   "Raw Value col L: [" & rData(rc,12) & "]" & Chr(10) & _
-                   "SafeDbl(Value): " & SafeDbl(rData(rc,12)) & Chr(10) & _
-                   "Raw Qty col C: [" & rData(rc,3) & "]" & Chr(10) & _
-                   "SafeDbl(Qty): " & SafeDbl(rData(rc,3)), _
+                   "GMI=[" & rData(rc,1) & "]" & Chr(10) & _
+                   "Date=[" & rData(rc,2) & "]" & Chr(10) & _
+                   "HODK=[" & rData(rc,6) & "]" & Chr(10) & _
+                   "Raw Value=[" & rData(rc,12) & "]" & Chr(10) & _
+                   "SafeDbl(Val)=" & SafeDbl(rData(rc,12)) & Chr(10) & _
+                   "Raw Qty=[" & rData(rc,3) & "]" & Chr(10) & _
+                   "SafeDbl(Qty)=" & SafeDbl(rData(rc,3)), _
                    vbInformation, "Row " & rc & " Diagnostic"
         End If
 
         Dim ho As Boolean : ho = IsHO(rData(rc, 6))
         Dim q As Double : q = SafeDbl(rData(rc, 3))
         Dim v As Double : v = SafeDbl(rData(rc, 12))
+        ' Flip qty sign for HO (cancel) rows
+        ' Value already correctly signed — do NOT flip
         If ho Then q = -q
-        ' Value is already correctly signed by the rec system — do not flip
         rEffQty(rc)   = q
         rEffVal(rc)   = v
         rPriceKey(rc) = PriceKey(SafeDbl(rData(rc, 5)))
+        rIntPxKey(rc) = IntPriceKey(SafeDbl(rData(rc, 5)))
         rResolved(rc) = False
 NextRIn:
     Next i
@@ -264,6 +266,8 @@ NextRIn:
         MsgBox "No valid data rows found.", vbExclamation
         GoTo Cleanup
     End If
+
+    MsgBox "Total rows read: " & rc, vbInformation, "Row Count"
 
     ' ════════════════════════════════════════════════════════════
     ' OUTPUT STORE
@@ -282,24 +286,23 @@ NextRIn:
     Dim oc As Long : oc = 0
 
     ' ════════════════════════════════════════════════════════════
-    ' PASS 1 — GMI + Product + Date + Price
+    ' PASS 1 — GMI + Product + Date (no price in key)
     ' ════════════════════════════════════════════════════════════
     Const MAXG1 As Long = 3000
-    Dim g1Key(MAXG1)   As String
-    Dim g1GMI(MAXG1)   As String
-    Dim g1Prod(MAXG1)  As String
-    Dim g1Date(MAXG1)  As String
-    Dim g1Price(MAXG1) As Double
-    Dim g1NetQ(MAXG1)  As Double
-    Dim g1NetV(MAXG1)  As Double
-    Dim g1Rows(MAXG1)  As Long
-    Dim g1HasHO(MAXG1) As Boolean
-    Dim g1HasDK(MAXG1) As Boolean
-    Dim g1Mem(MAXG1)   As String
-    Dim g1Sec(MAXG1)   As String
-    Dim g1MinPx(MAXG1) As Double
-    Dim g1MaxPx(MAXG1) As Double
+    Dim g1Key(MAXG1)    As String
+    Dim g1GMI(MAXG1)    As String
+    Dim g1Prod(MAXG1)   As String
+    Dim g1Date(MAXG1)   As String
+    Dim g1MinPx(MAXG1)  As Double
+    Dim g1MaxPx(MAXG1)  As Double
     Dim g1PxList(MAXG1) As String
+    Dim g1NetQ(MAXG1)   As Double
+    Dim g1NetV(MAXG1)   As Double
+    Dim g1Rows(MAXG1)   As Long
+    Dim g1HasHO(MAXG1)  As Boolean
+    Dim g1HasDK(MAXG1)  As Boolean
+    Dim g1Mem(MAXG1)    As String
+    Dim g1Sec(MAXG1)    As String
     Dim gc1 As Long : gc1 = 0
 
     Dim r As Long
@@ -314,19 +317,17 @@ NextRIn:
         If gi1 = 0 Then
             If gc1 >= MAXG1 Then GoTo NextRP1
             gc1 = gc1 + 1 : gi1 = gc1
-            g1Key(gi1)   = k1
-            g1GMI(gi1)   = rData(r,1)
-            g1Prod(gi1)  = rData(r,4)
-            g1Date(gi1)  = rData(r,2)
-            g1Price(gi1) = SafeDbl(rData(r,5))
-            g1NetQ(gi1)  = 0 : g1NetV(gi1) = 0 : g1Rows(gi1) = 0
-            g1HasHO(gi1) = False : g1HasDK(gi1) = False
-            g1Mem(gi1)   = "" : g1Sec(gi1) = ""
-            g1MinPx(gi1) = SafeDbl(rData(r,5))
-            g1MaxPx(gi1) = SafeDbl(rData(r,5))
+            g1Key(gi1)    = k1
+            g1GMI(gi1)    = rData(r,1)
+            g1Prod(gi1)   = rData(r,4)
+            g1Date(gi1)   = rData(r,2)
+            g1MinPx(gi1)  = SafeDbl(rData(r,5))
+            g1MaxPx(gi1)  = SafeDbl(rData(r,5))
             g1PxList(gi1) = rPriceKey(r)
+            g1NetQ(gi1)   = 0 : g1NetV(gi1) = 0 : g1Rows(gi1) = 0
+            g1HasHO(gi1)  = False : g1HasDK(gi1) = False
+            g1Mem(gi1)    = "" : g1Sec(gi1) = ""
         End If
-        ' Track price range
         Dim rp As Double : rp = SafeDbl(rData(r,5))
         If rp < g1MinPx(gi1) Then g1MinPx(gi1) = rp
         If rp > g1MaxPx(gi1) Then g1MaxPx(gi1) = rp
@@ -344,6 +345,32 @@ NextRIn:
 NextRP1:
     Next r
 
+    ' ── Pass 1 diagnostic ────────────────────────────────────────
+    Dim diagStr As String
+    diagStr = "P1 groups=" & gc1 & Chr(10)
+    Dim dg As Long
+    For dg = 1 To Application.Min(gc1, 8)
+        diagStr = diagStr & "G" & dg & ": rows=" & g1Rows(dg) & _
+                  " netQ=" & Format(g1NetQ(dg),"0.##") & _
+                  " netV=" & Format(g1NetV(dg),"0.00") & Chr(10)
+    Next dg
+    MsgBox diagStr, vbInformation, "Pass 1 Groups"
+
+    ' Show first 5 members of G1
+    Dim g1diagStr As String
+    g1diagStr = "G1 key=[" & g1Key(1) & "]" & Chr(10) & _
+                "rows=" & g1Rows(1) & " netQ=" & g1NetQ(1) & " netV=" & g1NetV(1) & Chr(10)
+    Dim dPts() As String : dPts = Split(g1Mem(1), "|")
+    Dim dP As Long
+    For dP = 0 To Application.Min(UBound(dPts), 4)
+        If Trim(dPts(dP)) <> "" Then
+            Dim dR As Long : dR = CLng(Trim(dPts(dP)))
+            g1diagStr = g1diagStr & "r" & dR & " HO=" & rData(dR,6) & _
+                        " effQ=" & rEffQty(dR) & " effV=" & rEffVal(dR) & Chr(10)
+        End If
+    Next dP
+    MsgBox g1diagStr, vbInformation, "G1 Members"
+
     ' Classify pass 1
     For g = 1 To gc1
         If g1Rows(g) < 2 Then GoTo SkipP1
@@ -352,13 +379,13 @@ NextRP1:
         If oc >= MAXG Then GoTo SkipP1
         oc = oc + 1
         oLabel(oc) = st1
+        Dim multiPx1 As Boolean : multiPx1 = (Abs(g1MaxPx(g)-g1MinPx(g)) > 0.00001)
         Dim multiSec1 As Boolean : multiSec1 = (InStr(g1Sec(g),"|")>0)
-        Dim multiPx1  As Boolean : multiPx1  = (Abs(g1MaxPx(g)-g1MinPx(g)) > 0.00001)
         Dim n1 As String
         Select Case st1
             Case "FALSE BREAK"
                 n1 = "Net qty = 0, net value = 0. Fully cancels."
-                If multiPx1 Then n1 = n1 & " | Prices: " & g1PxList(g) & " (review)"
+                If multiPx1 Then n1 = n1 & " | Price range: " & g1PxList(g) & " (review)"
                 If multiSec1 Then n1 = n1 & " | CUST/HOUSE transfer: " & g1Sec(g)
             Case "APS ROUNDING"
                 n1 = "Net qty = 0. Value diff " & Format(g1NetV(g),"+#,##0.00;-#,##0.00") & " within $20 APS rounding."
@@ -366,8 +393,7 @@ NextRP1:
             Case "PRICE BREAK"
                 n1 = "Net qty = 0 but cash does not net: " & Format(g1NetV(g),"+#,##0.00;-#,##0.00") & "."
                 If multiPx1 Then
-                    n1 = n1 & " Price range: " & Format(g1MinPx(g),"0.0000") & _
-                         " - " & Format(g1MaxPx(g),"0.0000") & ". Needs review."
+                    n1 = n1 & " Price range: " & Format(g1MinPx(g),"0.0000") & " - " & Format(g1MaxPx(g),"0.0000") & ". Needs review."
                 Else
                     n1 = n1 & " Price correction."
                 End If
@@ -391,7 +417,7 @@ SkipP1:
     Next g
 
     ' ════════════════════════════════════════════════════════════
-    ' PASS 2 — GMI + Product + Price (multi-date)
+    ' PASS 2 — GMI + Product + IntPrice (multi-date)
     ' ════════════════════════════════════════════════════════════
     Const MAXG2 As Long = 3000
     Dim g2Key(MAXG2)   As String
@@ -411,7 +437,7 @@ SkipP1:
     For r = 1 To rc
         If rResolved(r) Then GoTo NextRP2
         Dim k2 As String
-        k2 = rData(r,1) & "||" & rData(r,4) & "||" & IntPriceKey(SafeDbl(rData(r,5)))
+        k2 = rData(r,1) & "||" & rData(r,4) & "||" & rIntPxKey(r)
         Dim gi2 As Long : gi2 = 0
         For g = 1 To gc2
             If g2Key(g) = k2 Then gi2 = g : Exit For
@@ -452,7 +478,7 @@ NextRP2:
         Dim n2 As String
         Select Case st2
             Case "FALSE BREAK"
-                n2 = "Net qty = 0, net value = 0. Multi-date / T+2 cumulative. Dates: " & g2Dates(g)
+                n2 = "Net qty = 0, net value = 0. Multi-date / T+2 match. Dates: " & g2Dates(g)
                 If multiSec2 Then n2 = n2 & " | CUST/HOUSE transfer: " & g2Sec(g)
             Case "APS ROUNDING"
                 n2 = "Net qty = 0. Value diff " & Format(g2NetV(g),"+#,##0.00;-#,##0.00") & " within $20 APS rounding. Dates: " & g2Dates(g)
@@ -477,7 +503,7 @@ SkipP2:
     Next g
 
     ' ════════════════════════════════════════════════════════════
-    ' PASS 3 — Product + Price (cross-GMI / cross-section)
+    ' PASS 3 — Product + IntPrice (cross-GMI / cross-section)
     ' ════════════════════════════════════════════════════════════
     Const MAXG3 As Long = 3000
     Dim g3Key(MAXG3)   As String
@@ -497,7 +523,7 @@ SkipP2:
     For r = 1 To rc
         If rResolved(r) Then GoTo NextRP3
         Dim k3 As String
-        k3 = rData(r,4) & "||" & IntPriceKey(SafeDbl(rData(r,5)))
+        k3 = rData(r,4) & "||" & rIntPxKey(r)
         Dim gi3 As Long : gi3 = 0
         For g = 1 To gc3
             If g3Key(g) = k3 Then gi3 = g : Exit For
@@ -570,7 +596,6 @@ SkipP3:
 
     ' ════════════════════════════════════════════════════════════
     ' PASS 4 — Remaining = TRUE BREAK or SINGLE-SIDED
-    ' Group by GMI + Product + Price for display
     ' ════════════════════════════════════════════════════════════
     Const MAXG4 As Long = 3000
     Dim g4Key(MAXG4)   As String
@@ -590,7 +615,7 @@ SkipP3:
     For r = 1 To rc
         If rResolved(r) Then GoTo NextRP4
         Dim k4 As String
-        k4 = rData(r,1) & "||" & rData(r,4) & "||" & IntPriceKey(SafeDbl(rData(r,5)))
+        k4 = rData(r,1) & "||" & rData(r,4) & "||" & rIntPxKey(r)
         Dim gi4 As Long : gi4 = 0
         For g = 1 To gc4
             If g4Key(g) = k4 Then gi4 = g : Exit For
@@ -625,7 +650,6 @@ NextRP4:
         oc = oc + 1
         Dim st4 As String
         st4 = IIf(g4Rows(g) = 1, "SINGLE-SIDED", "TRUE BREAK")
-        oLabel(oc) = st4
         Dim n4 As String
         If st4 = "TRUE BREAK" Then
             n4 = "Open qty: " & Format(g4NetQ(g),"+0.###;-0.###")
@@ -638,6 +662,7 @@ NextRP4:
         Else
             n4 = "Single row — nothing to net against."
         End If
+        oLabel(oc)   = st4
         oNote(oc)    = n4
         oGMI(oc)     = g4GMI(g)
         oProd(oc)    = g4Prod(g)
