@@ -218,7 +218,16 @@ Public Sub RunRecon()
         rc = rc + 1
         Dim col As Long
         For col = 1 To 12
-            rData(rc, col) = SafeStr(wsIn.Cells(i, col).Value)
+            If col = 2 Then
+                ' Date column — force consistent string format
+                If IsDate(wsIn.Cells(i, col).Value) Then
+                    rData(rc, col) = Format(CDate(wsIn.Cells(i, col).Value), "m/d/yyyy")
+                Else
+                    rData(rc, col) = SafeStr(wsIn.Cells(i, col).Value)
+                End If
+            Else
+                rData(rc, col) = SafeStr(wsIn.Cells(i, col).Value)
+            End If
         Next col
         rData(rc, 13) = curSec
         Dim ho As Boolean : ho = IsHO(rData(rc, 6))
