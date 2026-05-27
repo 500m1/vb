@@ -235,25 +235,14 @@ Public Sub RunRecon()
         Next col
         rData(rc, 13) = curSec
 
-        ' ── Diagnostic: first 5 rows ─────────────────────────────
-        If rc <= 5 Then
-            MsgBox "Row " & rc & Chr(10) & _
-                   "GMI=[" & rData(rc,1) & "]" & Chr(10) & _
-                   "Date=[" & rData(rc,2) & "]" & Chr(10) & _
-                   "HODK=[" & rData(rc,6) & "]" & Chr(10) & _
-                   "Raw Value=[" & rData(rc,12) & "]" & Chr(10) & _
-                   "SafeDbl(Val)=" & SafeDbl(rData(rc,12)) & Chr(10) & _
-                   "Raw Qty=[" & rData(rc,3) & "]" & Chr(10) & _
-                   "SafeDbl(Qty)=" & SafeDbl(rData(rc,3)), _
-                   vbInformation, "Row " & rc & " Diagnostic"
-        End If
 
         Dim ho As Boolean : ho = IsHO(rData(rc, 6))
         Dim q As Double : q = SafeDbl(rData(rc, 3))
         Dim v As Double : v = SafeDbl(rData(rc, 12))
-        ' Flip qty sign for HO (cancel) rows
-        ' Value already correctly signed — do NOT flip
+        ' HO = cancel: flip BOTH qty and value signs
+        ' All values stored as positive in col L — HO rows need sign flipped to cancel
         If ho Then q = -q
+        If ho Then v = -v
         rEffQty(rc)   = q
         rEffVal(rc)   = v
         rPriceKey(rc) = PriceKey(SafeDbl(rData(rc, 5)))
@@ -267,7 +256,6 @@ NextRIn:
         GoTo Cleanup
     End If
 
-    MsgBox "Total rows read: " & rc, vbInformation, "Row Count"
 
     ' ════════════════════════════════════════════════════════════
     ' OUTPUT STORE
@@ -345,31 +333,6 @@ NextRIn:
 NextRP1:
     Next r
 
-    ' ── Pass 1 diagnostic ────────────────────────────────────────
-    Dim diagStr As String
-    diagStr = "P1 groups=" & gc1 & Chr(10)
-    Dim dg As Long
-    For dg = 1 To Application.Min(gc1, 8)
-        diagStr = diagStr & "G" & dg & ": rows=" & g1Rows(dg) & _
-                  " netQ=" & Format(g1NetQ(dg),"0.##") & _
-                  " netV=" & Format(g1NetV(dg),"0.00") & Chr(10)
-    Next dg
-    MsgBox diagStr, vbInformation, "Pass 1 Groups"
-
-    ' Show first 5 members of G1
-    Dim g1diagStr As String
-    g1diagStr = "G1 key=[" & g1Key(1) & "]" & Chr(10) & _
-                "rows=" & g1Rows(1) & " netQ=" & g1NetQ(1) & " netV=" & g1NetV(1) & Chr(10)
-    Dim dPts() As String : dPts = Split(g1Mem(1), "|")
-    Dim dP As Long
-    For dP = 0 To Application.Min(UBound(dPts), 4)
-        If Trim(dPts(dP)) <> "" Then
-            Dim dR As Long : dR = CLng(Trim(dPts(dP)))
-            g1diagStr = g1diagStr & "r" & dR & " HO=" & rData(dR,6) & _
-                        " effQ=" & rEffQty(dR) & " effV=" & rEffVal(dR) & Chr(10)
-        End If
-    Next dP
-    MsgBox g1diagStr, vbInformation, "G1 Members"
 
     ' Classify pass 1
     For g = 1 To gc1
