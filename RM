@@ -1,0 +1,1 @@
+    MsgBox "Rows read: " & rc & Chr(10) & "First row GMI: " & rData(1,1) & Chr(10) & "Product: " & rData(1,4) & Chr(10) & "Price: " & rData(1,5) & Chr(10) & "HODK: " & rData(1,6) & Chr(10) & "Value: " & rData(1,12) & Chr(10) & "EffQty: " & rEffQty(1) & Chr(10) & "EffVal: " & rEffVal(1), vbInformation, "Diagnostic"
