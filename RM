@@ -1,4 +1,3 @@
-Attribute VB_Name = "ReconMacro"
 Option Explicit
 
 Private Const APS_THRESHOLD As Double = 20.0
@@ -512,40 +511,178 @@ NextRP1:
             g1Mem(g) = ""
 
         Else
-            ' Mixed group — split into HO and DK members
-            Dim hoMemStr As String : hoMemStr = ""
-            Dim dkMemStr As String : dkMemStr = ""
+            ' ── Mixed group: first try to extract exact-price sub-groups ──
+            ' Sub-group by exact price within the mixed group
+            ' Each sub-group: if HO qty = DK qty AND value nets = 0 → FALSE BREAK
+            ' Remaining rows → NEEDS REVIEW
+
+            Const MAXSP As Long = 200
+            Dim spKey(MAXSP)    As String
+            Dim spHoQ(MAXSP)    As Double
+            Dim spDkQ(MAXSP)    As Double
+            Dim spHoV(MAXSP)    As Double
+            Dim spDkV(MAXSP)    As Double
+            Dim spNetQ(MAXSP)   As Double
+            Dim spNetV(MAXSP)   As Double
+            Dim spHoMem(MAXSP)  As String
+            Dim spDkMem(MAXSP)  As String
+            Dim spCount As Long : spCount = 0
+
             Dim mPts() As String : mPts = Split(g1Mem(g), "|")
             Dim mp As Long
             For mp = 0 To UBound(mPts)
                 If Trim(mPts(mp)) = "" Then GoTo NextMP
                 Dim mR As Long : mR = CLng(Trim(mPts(mp)))
-                If IsHO(rData(mR,6)) Then
-                    hoMemStr = IIf(hoMemStr="", CStr(mR), hoMemStr & "|" & CStr(mR))
-                Else
-                    dkMemStr = IIf(dkMemStr="", CStr(mR), dkMemStr & "|" & CStr(mR))
+                Dim mPx As String : mPx = PriceKey(SafeDbl(rData(mR,5)))
+
+                ' Find or create sub-group for this price
+                Dim spi As Long : spi = 0
+                Dim spj As Long
+                For spj = 1 To spCount
+                    If spKey(spj) = mPx Then spi = spj : Exit For
+                Next spj
+                If spi = 0 Then
+                    spCount = spCount + 1 : spi = spCount
+                    spKey(spi) = mPx
+                    spHoQ(spi) = 0 : spDkQ(spi) = 0
+                    spHoV(spi) = 0 : spDkV(spi) = 0
+                    spNetQ(spi) = 0 : spNetV(spi) = 0
+                    spHoMem(spi) = "" : spDkMem(spi) = ""
                 End If
-                rResolved(mR) = True
+
+                If IsHO(rData(mR,6)) Then
+                    spHoQ(spi) = spHoQ(spi) + Abs(rRawQty(mR))
+                    spHoV(spi) = spHoV(spi) + rRawVal(mR)
+                    spHoMem(spi) = IIf(spHoMem(spi)="", CStr(mR), spHoMem(spi) & "|" & CStr(mR))
+                Else
+                    spDkQ(spi) = spDkQ(spi) + Abs(rRawQty(mR))
+                    spDkV(spi) = spDkV(spi) + rRawVal(mR)
+                    spDkMem(spi) = IIf(spDkMem(spi)="", CStr(mR), spDkMem(spi) & "|" & CStr(mR))
+                End If
+                spNetQ(spi) = spNetQ(spi) + rEffQty(mR)
+                spNetV(spi) = spNetV(spi) + rEffVal(mR)
 NextMP:
             Next mp
 
-            If oc >= MAXG Then GoTo SkipP1
-            oc = oc + 1
-            oLabel(oc) = "NEEDS REVIEW"
-            oNote(oc)  = "Mixed group — HO qty=" & Format(g1HOQty(g),"0.###") & _
-                         " DK qty=" & Format(g1DKQty(g),"0.###") & _
-                         " HO val=" & Format(g1HOVal(g),"#,##0.00") & _
-                         " DK val=" & Format(g1DKVal(g),"#,##0.00") & _
-                         ". Sorted by qty — highlight to find zero nets."
-            If multiPx1 Then oNote(oc) = oNote(oc) & " | Prices: " & g1PxList(g)
-            oGMI(oc)   = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
-            oPrice(oc) = g1MinPx(g) : oNetQty(oc) = netQty1 : oNetVal(oc) = netVal1
-            oSec(oc)   = g1Sec(g)
-            oHoMem(oc) = hoMemStr : oDkMem(oc) = dkMemStr
-            oHoQty(oc) = g1HOQty(g) : oHoVal(oc) = g1HOVal(g)
-            oDkQty(oc) = g1DKQty(g) : oDkVal(oc) = g1DKVal(g)
-            oIsMixed(oc) = True
-            cTB = cTB + 1
+            ' Classify each price sub-group
+            Dim remHoStr As String : remHoStr = ""
+            Dim remDkStr As String : remDkStr = ""
+            Dim remHoQ As Double : remHoQ = 0
+            Dim remDkQ As Double : remDkQ = 0
+            Dim remHoV As Double : remHoV = 0
+            Dim remDkV As Double : remDkV = 0
+
+            For spj = 1 To spCount
+                Dim spQMatch As Boolean
+                spQMatch = (Abs(spHoQ(spj) - spDkQ(spj)) < 0.001)
+                Dim spBothSides As Boolean
+                spBothSides = (spHoMem(spj) <> "" And spDkMem(spj) <> "")
+
+                If spQMatch And spBothSides Then
+                    ' Qty matches on both sides at this price
+                    If Abs(spNetV(spj)) < 0.01 Then
+                        ' FALSE BREAK
+                        If oc < MAXG Then
+                            oc = oc + 1
+                            oLabel(oc) = "FALSE BREAK"
+                            oNote(oc) = "Net qty = 0, net value = 0 at price " & spKey(spj) & ". Extracted from mixed group."
+                            If multiSec1 Then oNote(oc) = oNote(oc) & " | CUST/HOUSE: " & g1Sec(g)
+                            oGMI(oc) = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
+                            oPrice(oc) = SafeDbl(spKey(spj)) : oNetQty(oc) = 0 : oNetVal(oc) = 0
+                            oSec(oc) = g1Sec(g)
+                            oMembers(oc) = spHoMem(spj) & "|" & spDkMem(spj)
+                            oIsMixed(oc) = False
+                            cFB = cFB + 1
+                            ' Mark as resolved
+                            Dim fbPts() As String : fbPts = Split(oMembers(oc), "|")
+                            Dim fbp As Long
+                            For fbp = 0 To UBound(fbPts)
+                                If Trim(fbPts(fbp)) <> "" Then rResolved(CLng(Trim(fbPts(fbp)))) = True
+                            Next fbp
+                        End If
+                    ElseIf Abs(spNetV(spj)) <= APS_THRESHOLD Then
+                        ' APS ROUNDING
+                        If oc < MAXG Then
+                            oc = oc + 1
+                            oLabel(oc) = "APS ROUNDING"
+                            oNote(oc) = "Net qty = 0 at price " & spKey(spj) & ". Value diff " & Format(spNetV(spj),"+#,##0.00;-#,##0.00") & " within $20 APS rounding."
+                            oGMI(oc) = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
+                            oPrice(oc) = SafeDbl(spKey(spj)) : oNetQty(oc) = 0 : oNetVal(oc) = spNetV(spj)
+                            oSec(oc) = g1Sec(g)
+                            oMembers(oc) = spHoMem(spj) & "|" & spDkMem(spj)
+                            oIsMixed(oc) = False
+                            cAPS = cAPS + 1
+                            Dim apsPts() As String : apsPts = Split(oMembers(oc), "|")
+                            Dim apsp As Long
+                            For apsp = 0 To UBound(apsPts)
+                                If Trim(apsPts(apsp)) <> "" Then rResolved(CLng(Trim(apsPts(apsp)))) = True
+                            Next apsp
+                        End If
+                    Else
+                        ' PRICE BREAK — qty matches but value off > $20
+                        If oc < MAXG Then
+                            oc = oc + 1
+                            oLabel(oc) = "PRICE BREAK"
+                            oNote(oc) = "Net qty = 0 at price " & spKey(spj) & " but cash does not net: " & Format(spNetV(spj),"+#,##0.00;-#,##0.00") & ". Price correction."
+                            oGMI(oc) = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
+                            oPrice(oc) = SafeDbl(spKey(spj)) : oNetQty(oc) = 0 : oNetVal(oc) = spNetV(spj)
+                            oSec(oc) = g1Sec(g)
+                            oMembers(oc) = spHoMem(spj) & "|" & spDkMem(spj)
+                            oIsMixed(oc) = False
+                            cPB = cPB + 1
+                            Dim pbPts() As String : pbPts = Split(oMembers(oc), "|")
+                            Dim pbp As Long
+                            For pbp = 0 To UBound(pbPts)
+                                If Trim(pbPts(pbp)) <> "" Then rResolved(CLng(Trim(pbPts(pbp)))) = True
+                            Next pbp
+                        End If
+                    End If
+                Else
+                    ' Qty doesn't match or only one side — goes to NEEDS REVIEW
+                    remHoStr = IIf(remHoStr="", spHoMem(spj), IIf(spHoMem(spj)="", remHoStr, remHoStr & "|" & spHoMem(spj)))
+                    remDkStr = IIf(remDkStr="", spDkMem(spj), IIf(spDkMem(spj)="", remDkStr, remDkStr & "|" & spDkMem(spj)))
+                    remHoQ = remHoQ + spHoQ(spj)
+                    remDkQ = remDkQ + spDkQ(spj)
+                    remHoV = remHoV + spHoV(spj)
+                    remDkV = remDkV + spDkV(spj)
+                    ' Mark as resolved so pass 2/3/4 don't re-process
+                    If spHoMem(spj) <> "" Then
+                        Dim rhPts() As String : rhPts = Split(spHoMem(spj), "|")
+                        Dim rhp As Long
+                        For rhp = 0 To UBound(rhPts)
+                            If Trim(rhPts(rhp)) <> "" Then rResolved(CLng(Trim(rhPts(rhp)))) = True
+                        Next rhp
+                    End If
+                    If spDkMem(spj) <> "" Then
+                        Dim rdPts() As String : rdPts = Split(spDkMem(spj), "|")
+                        Dim rdp As Long
+                        For rdp = 0 To UBound(rdPts)
+                            If Trim(rdPts(rdp)) <> "" Then rResolved(CLng(Trim(rdPts(rdp)))) = True
+                        Next rdp
+                    End If
+                End If
+            Next spj
+
+            ' Write remaining unresolved as NEEDS REVIEW
+            If remHoStr <> "" Or remDkStr <> "" Then
+                If oc < MAXG Then
+                    oc = oc + 1
+                    oLabel(oc) = "NEEDS REVIEW"
+                    oNote(oc) = "Remaining after price sub-grouping. HO qty=" & Format(remHoQ,"0.###") & _
+                                " DK qty=" & Format(remDkQ,"0.###") & _
+                                " HO val=" & Format(remHoV,"#,##0.00") & _
+                                " DK val=" & Format(remDkV,"#,##0.00") & _
+                                ". Sorted by qty — highlight to verify zero nets."
+                    oGMI(oc) = g1GMI(g) : oProd(oc) = g1Prod(g) : oDates(oc) = g1Date(g)
+                    oPrice(oc) = g1MinPx(g) : oNetQty(oc) = netQty1 : oNetVal(oc) = netVal1
+                    oSec(oc) = g1Sec(g)
+                    oHoMem(oc) = remHoStr : oDkMem(oc) = remDkStr
+                    oHoQty(oc) = remHoQ : oHoVal(oc) = remHoV
+                    oDkQty(oc) = remDkQ : oDkVal(oc) = remDkV
+                    oIsMixed(oc) = True
+                    cTB = cTB + 1
+                End If
+            End If
             g1Mem(g) = ""
         End If
 SkipP1:
