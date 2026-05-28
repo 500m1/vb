@@ -40,27 +40,27 @@ End Function
 
 Private Function IsHeaderRow(ws As Worksheet, rowNum As Long, _
                              ByRef secLabel As String) As Boolean
-    Dim j As Long, full As String
-    full = ""
-    For j = 1 To 7
-        full = full & " " & UCase(SafeStr(ws.Cells(rowNum, j).Value))
-    Next j
-    full = Trim(full)
-    Dim kw(11) As String
-    kw(0)="HOUSE":kw(1)="CUST":kw(2)="CUSTOMER":kw(3)="HSE"
-    kw(4)="SUS":kw(5)="SUSPENSE":kw(6)="BREAKS":kw(7)="ADJUSTMENT"
-    kw(8)="CANADIAN":kw(9)="BARCLAYS":kw(10)="GLOBAL":kw(11)="RBC"
-    Dim k As Long
-    For k = 0 To 11
-        If InStr(full, kw(k)) > 0 Then
-            If Len(full) > 2 Then secLabel = Trim(full)
-            IsHeaderRow = True : Exit Function
+    ' A row is a data row if col B (date) AND col C (qty) both have values
+    ' If either is empty it is a header, spacer, or section label row
+    Dim colB As String : colB = Trim(SafeStr(ws.Cells(rowNum, 2).Value))
+    Dim colC As String : colC = Trim(SafeStr(ws.Cells(rowNum, 3).Value))
+
+    If colB = "" Or colC = "" Then
+        ' Capture col A as section label if it has content
+        Dim colA As String : colA = Trim(SafeStr(ws.Cells(rowNum, 1).Value))
+        If colA <> "" Then
+            ' Build full row text for section label
+            Dim j As Long, full As String : full = ""
+            For j = 1 To 7
+                full = full & " " & SafeStr(ws.Cells(rowNum, j).Value)
+            Next j
+            full = Trim(full)
+            If Len(full) > 2 Then secLabel = full
         End If
-    Next k
-    Dim a As String : a = UCase(SafeStr(ws.Cells(rowNum, 1).Value))
-    If a="GMI" Or a="DATE" Or a="QTY" Or a="MONTH" Or a="ACCOUNT" Then
-        IsHeaderRow = True : Exit Function
+        IsHeaderRow = True
+        Exit Function
     End If
+
     IsHeaderRow = False
 End Function
 
@@ -843,9 +843,9 @@ SkipP4:
     ' ════════════════════════════════════════════════════════════
     With wsOut
         If .AutoFilterMode Then .AutoFilterMode = False
-        .Range("A7:N3000").ClearContents
-        .Range("A7:N3000").Interior.ColorIndex = xlNone
-        .Range("A7:N3000").Borders.LineStyle = xlNone
+        .Range("A7:N6000").ClearContents
+        .Range("A7:N6000").Interior.ColorIndex = xlNone
+        .Range("A7:N6000").Borders.LineStyle = xlNone
     End With
 
     Dim outR As Long : outR = 7
@@ -917,9 +917,9 @@ Public Sub ClearResults()
     Set wsOut = ThisWorkbook.Sheets("RESULTS")
     With wsOut
         If .AutoFilterMode Then .AutoFilterMode = False
-        .Range("A7:N3000").ClearContents
-        .Range("A7:N3000").Interior.ColorIndex = xlNone
-        .Range("A7:N3000").Borders.LineStyle = xlNone
+        .Range("A7:N6000").ClearContents
+        .Range("A7:N6000").Interior.ColorIndex = xlNone
+        .Range("A7:N6000").Borders.LineStyle = xlNone
     End With
     wsOut.Cells(4,1).Value="Total Rows:":wsOut.Cells(4,3).Value="Break Groups:"
     wsOut.Cells(4,5).Value="False Breaks:":wsOut.Cells(4,7).Value="Price Breaks:"
